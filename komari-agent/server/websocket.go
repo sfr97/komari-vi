@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,6 +18,16 @@ import (
 	"github.com/komari-monitor/komari-agent/utils"
 	"github.com/komari-monitor/komari-agent/ws"
 )
+
+var forwardManagerOnce sync.Once
+var forwardManager *forward.Manager
+
+func getForwardManager() *forward.Manager {
+	forwardManagerOnce.Do(func() {
+		forwardManager = forward.NewManager()
+	})
+	return forwardManager
+}
 
 func EstablishWebSocketConnection() {
 
@@ -63,6 +74,12 @@ func EstablishWebSocketConnection() {
 					conn, err = connectWebSocket(websocketEndpoint)
 					if err == nil {
 						log.Println("WebSocket connected")
+						getForwardManager().RebindConn(conn)
+						// 先发一次 report，保持与 server 端“首次消息即 report”的习惯一致
+						if err := conn.WriteMessage(websocket.TextMessage, monitoring.GenerateReport()); err != nil {
+							log.Println("Failed to send initial report:", err)
+						}
+						_ = conn.WriteJSON(map[string]interface{}{"message": "forward_resync_request"})
 						go handleWebSocketMessages(conn, make(chan struct{}))
 						break
 					} else {
@@ -82,6 +99,7 @@ func EstablishWebSocketConnection() {
 			err = conn.WriteMessage(websocket.TextMessage, data)
 			if err != nil {
 				log.Println("Failed to send WebSocket message:", err)
+				getForwardManager().RebindConn(nil)
 				conn.Close()
 				conn = nil // Mark connection as dead
 				continue
@@ -91,6 +109,7 @@ func EstablishWebSocketConnection() {
 				err := conn.WriteMessage(websocket.PingMessage, nil)
 				if err != nil {
 					log.Println("Failed to send heartbeat:", err)
+					getForwardManager().RebindConn(nil)
 					conn.Close()
 					conn = nil // Mark connection as dead
 				}
@@ -208,7 +227,7 @@ func establishTerminalConnection(token, id, endpoint string) {
 }
 
 func handleForwardTask(conn *ws.SafeConn, task forward.TaskEnvelope) {
-	manager := forward.NewManager()
+	manager := getForwardManager()
 	respPayload, err := manager.HandleTask(conn, task)
 	success := err == nil
 	msg := ""

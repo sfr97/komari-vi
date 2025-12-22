@@ -98,22 +98,29 @@ func (p *PrioritySwitcher) MonitorAndSwitch(conn *ws.SafeConn, ruleID uint, entr
 			}
 			latency, ok := PingLatencyWithProtocol(protocol, addr, 3*time.Second)
 			p.health.RecordStatus(ruleID, relay.NodeID, ok, latency)
-			if ok {
+			if ok && candidate == "" {
 				candidate = relay.NodeID
-				break
 			}
 		}
 		if candidate == "" || candidate == activeID {
 			return
+		}
+		reason := "priority_failover"
+		curOrder, curOK := relayOrder(sorted, activeID)
+		nextOrder, nextOK := relayOrder(sorted, candidate)
+		if curOK && nextOK && nextOrder < curOrder {
+			reason = "priority_failback"
 		}
 		cfg := configs[candidate]
 		if cfg == "" {
 			log.Printf("priority switch skipped: empty config for relay %s", candidate)
 			return
 		}
+		cfg = rewriteRealmListen(cfg, listenPort)
 		if _, err := p.process.Update(UpdateRealmRequest{
 			RuleID:              ruleID,
 			NodeID:              entryNodeID,
+			EntryNodeID:         entryNodeID,
 			Protocol:            protocol,
 			NewConfig:           cfg,
 			NewPort:             listenPort,
@@ -121,13 +128,17 @@ func (p *PrioritySwitcher) MonitorAndSwitch(conn *ws.SafeConn, ruleID uint, entr
 			HealthCheckInterval: healthInterval,
 			HealthCheckNextHop:  remoteAddrs[candidate],
 			HealthCheckTarget:   healthTarget,
+			PriorityConfigs:     configs,
+			PriorityRelays:      relays,
+			ActiveRelayNodeID:   candidate,
+			PriorityListenPort:  listenPort,
 		}, conn); err != nil {
 			log.Printf("priority switch update failed: %v", err)
 			return
 		}
 		reportConfigChange(conn, ruleID, entryNodeID, cfg, map[string]interface{}{
 			"active_relay_node_id": candidate,
-		}, "priority_switch")
+		}, reason)
 		activeID = candidate
 	}
 
@@ -143,6 +154,18 @@ func (p *PrioritySwitcher) MonitorAndSwitch(conn *ws.SafeConn, ruleID uint, entr
 	}
 }
 
+func relayOrder(relays []RelayNode, nodeID string) (int, bool) {
+	if nodeID == "" {
+		return 0, false
+	}
+	for _, r := range relays {
+		if r.NodeID == nodeID {
+			return r.SortOrder, true
+		}
+	}
+	return 0, false
+}
+
 func sortPriorityRelays(relays []RelayNode) []RelayNode {
 	result := make([]RelayNode, len(relays))
 	copy(result, relays)
@@ -156,20 +179,12 @@ func sortPriorityRelays(relays []RelayNode) []RelayNode {
 }
 
 func parseRemoteAddr(cfg string) string {
-	lines := strings.Split(cfg, "\n")
-	for _, line := range lines {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "remote") {
-			parts := strings.SplitN(trim, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			addr := strings.TrimSpace(parts[1])
-			addr = strings.Trim(addr, "\"")
-			if addr != "" {
-				return addr
-			}
-		}
+	cfg = strings.ReplaceAll(cfg, "\r\n", "\n")
+	if m := realmRemoteRe.FindStringSubmatch(cfg); len(m) >= 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if targets := parseRealmOutTargets(cfg); len(targets) > 0 {
+		return strings.TrimSpace(targets[0])
 	}
 	return ""
 }

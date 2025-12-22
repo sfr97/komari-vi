@@ -8,9 +8,12 @@ import (
 )
 
 // sendForwardStats 发送一次 forward_stats 上报
-func sendForwardStats(conn *ws.SafeConn, ruleID uint, nodeID string, port int, status string, inBytes, outBytes, bpsIn, bpsOut int64, latency int64, activeConns int) {
+func sendForwardStats(conn *ws.SafeConn, ruleID uint, nodeID string, port int, status string, inBytes, outBytes, bpsIn, bpsOut int64, nodesLatency map[string]int64, activeRelayNodeID string, activeConns int) {
 	if conn == nil {
 		return
+	}
+	if nodesLatency == nil {
+		nodesLatency = map[string]int64{}
 	}
 	payload := map[string]interface{}{
 		"type":                 "forward_stats",
@@ -22,8 +25,8 @@ func sendForwardStats(conn *ws.SafeConn, ruleID uint, nodeID string, port int, s
 		"traffic_out_bytes":    outBytes,
 		"realtime_bps_in":      bpsIn,
 		"realtime_bps_out":     bpsOut,
-		"active_relay_node_id": "",
-		"nodes_latency":        map[string]int64{"self": latency},
+		"active_relay_node_id": activeRelayNodeID,
+		"nodes_latency":        nodesLatency,
 		"last_updated_at":      time.Now().UTC(),
 		"port":                 port,
 	}

@@ -30,7 +30,6 @@ func GetForwardStats(c *gin.Context) {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	history, _ := forward.GetRecentTrafficHistory(id, "", 300)
 
 	var rc forward.RuleConfig
 	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
@@ -41,6 +40,11 @@ func GetForwardStats(c *gin.Context) {
 			break
 		}
 	}
+	historyNodeID := ""
+	if rc.EntryNodeID != "" {
+		historyNodeID = rc.EntryNodeID
+	}
+	history, _ := forward.GetRecentTrafficHistory(id, historyNodeID, 300)
 
 	resp := gin.H{
 		"rule":           rule,

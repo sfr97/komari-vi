@@ -16,7 +16,6 @@ import (
 	jsonRpc "github.com/komari-monitor/komari/api/jsonRpc"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
-	dbforward "github.com/komari-monitor/komari/database/forward"
 	"github.com/komari-monitor/komari/database/models"
 	scriptdb "github.com/komari-monitor/komari/database/script"
 	"github.com/komari-monitor/komari/database/tasks"
@@ -165,7 +164,8 @@ func WebSocketReport(c *gin.Context) {
 // 将消息处理逻辑提取到一个函数中，方便复用
 func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 	type MessageType struct {
-		Type string `json:"type"`
+		Type    string `json:"type"`
+		Message string `json:"message"`
 	}
 	var msgType MessageType
 	err := json.Unmarshal(message, &msgType)
@@ -174,7 +174,12 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 		return
 	}
 
-	switch msgType.Type {
+	kind := msgType.Type
+	if kind == "" {
+		kind = msgType.Message
+	}
+
+	switch kind {
 	case "", "report":
 		report := common.Report{}
 		err = json.Unmarshal(message, &report)
@@ -296,31 +301,59 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 			TaskType string          `json:"task_type"`
 			Success  bool            `json:"success"`
 			Message  string          `json:"message"`
+			Detail   string          `json:"detail"`
 			Payload  json.RawMessage `json:"payload"`
 		}
 		if err := json.Unmarshal(message, &resp); err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid forward task result format"})
 			return
 		}
+		msg := resp.Message
+		if msg == "" {
+			msg = resp.Detail
+		}
 		forward.CompleteResult(forward.AgentTaskResult{
 			TaskID:   resp.TaskID,
 			TaskType: forward.TaskType(resp.TaskType),
 			NodeID:   uuid,
 			Success:  resp.Success,
-			Message:  resp.Message,
+			Message:  msg,
 			Payload:  resp.Payload,
 		})
+	case "forward_resync_request":
+		go forward.ResyncNodeOnReconnect(uuid)
 	case "forward_config_sync":
-		var payload struct {
+		var env struct {
+			Payload json.RawMessage `json:"payload"`
+
 			RuleID            uint                   `json:"rule_id"`
 			NodeID            string                 `json:"node_id"`
 			RealmConfig       string                 `json:"realm_config"`
 			ConfigJSONUpdates map[string]interface{} `json:"config_json_updates"`
 			Reason            string                 `json:"reason"`
 		}
-		if err := json.Unmarshal(message, &payload); err != nil {
+		if err := json.Unmarshal(message, &env); err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid forward config sync format"})
 			return
+		}
+		payload := struct {
+			RuleID            uint                   `json:"rule_id"`
+			NodeID            string                 `json:"node_id"`
+			RealmConfig       string                 `json:"realm_config"`
+			ConfigJSONUpdates map[string]interface{} `json:"config_json_updates"`
+			Reason            string                 `json:"reason"`
+		}{}
+		if len(env.Payload) > 0 {
+			if err := json.Unmarshal(env.Payload, &payload); err != nil {
+				conn.WriteJSON(gin.H{"status": "error", "error": "Invalid forward config sync payload format"})
+				return
+			}
+		} else {
+			payload.RuleID = env.RuleID
+			payload.NodeID = env.NodeID
+			payload.RealmConfig = env.RealmConfig
+			payload.ConfigJSONUpdates = env.ConfigJSONUpdates
+			payload.Reason = env.Reason
 		}
 		go func() {
 			if err := forward.ApplyConfigSync(payload.RuleID, payload.NodeID, payload.RealmConfig, payload.ConfigJSONUpdates, payload.Reason); err != nil {
@@ -328,7 +361,18 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 			}
 		}()
 	case "forward_stats":
-		var payload models.ForwardStat
+		var payload struct {
+			RuleID            uint            `json:"rule_id"`
+			NodeID            string          `json:"node_id"`
+			LinkStatus        string          `json:"link_status"`
+			ActiveConnections int             `json:"active_connections"`
+			TrafficInBytes    int64           `json:"traffic_in_bytes"`
+			TrafficOutBytes   int64           `json:"traffic_out_bytes"`
+			RealtimeBpsIn     int64           `json:"realtime_bps_in"`
+			RealtimeBpsOut    int64           `json:"realtime_bps_out"`
+			ActiveRelayNodeID string          `json:"active_relay_node_id"`
+			NodesLatency      json.RawMessage `json:"nodes_latency"`
+		}
 		if err := json.Unmarshal(message, &payload); err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid forward stats format"})
 			return
@@ -337,12 +381,39 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Missing rule_id or node_id"})
 			return
 		}
-		_ = dbforward.UpsertForwardStat(&payload)
-		forward.UpdateStatsAndBroadcast(&payload)
+		stat := &models.ForwardStat{
+			RuleID:            payload.RuleID,
+			NodeID:            payload.NodeID,
+			LinkStatus:        payload.LinkStatus,
+			ActiveConnections: payload.ActiveConnections,
+			TrafficInBytes:    payload.TrafficInBytes,
+			TrafficOutBytes:   payload.TrafficOutBytes,
+			RealtimeBpsIn:     payload.RealtimeBpsIn,
+			RealtimeBpsOut:    payload.RealtimeBpsOut,
+			ActiveRelayNodeID: payload.ActiveRelayNodeID,
+			NodesLatency:      normalizeForwardNodesLatency(payload.NodesLatency),
+		}
+		forward.UpdateStatsAndBroadcast(stat)
 	default:
-		log.Printf("Unknown message type: %s", msgType.Type)
+		log.Printf("Unknown message type: %s", kind)
 		conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})
 	}
+}
+
+func normalizeForwardNodesLatency(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// 兼容：nodes_latency 可能是字符串（已序列化JSON），也可能是对象（map）
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return asString
+	}
+	trim := bytes.TrimSpace(raw)
+	if len(trim) == 0 {
+		return ""
+	}
+	return string(trim)
 }
 
 func SaveClientReport(uuid string, report common.Report) error {

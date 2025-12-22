@@ -5,6 +5,8 @@ import (
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // UpsertTrafficHistory 写入/更新历史统计（按 rule_id + node_id + timestamp 聚合）
@@ -16,6 +18,27 @@ func UpsertTrafficHistory(entry *models.ForwardTrafficHistory) error {
 	return db.Where("rule_id = ? AND node_id = ? AND timestamp = ?", entry.RuleID, entry.NodeID, entry.Timestamp).
 		Assign(entry).
 		FirstOrCreate(entry).Error
+}
+
+// AddTrafficHistory 将本次采样的增量累加到同一个时间桶（按 rule_id + node_id + timestamp 唯一）
+func AddTrafficHistory(entry *models.ForwardTrafficHistory) error {
+	if entry == nil {
+		return nil
+	}
+	db := dbcore.GetDBInstance()
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "rule_id"},
+			{Name: "node_id"},
+			{Name: "timestamp"},
+		},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"connections":      entry.Connections,
+			"avg_latency_ms":   entry.AvgLatencyMs,
+			"traffic_in_bytes": gorm.Expr("traffic_in_bytes + ?", entry.TrafficInBytes),
+			"traffic_out_bytes": gorm.Expr("traffic_out_bytes + ?", entry.TrafficOutBytes),
+		}),
+	}).Create(entry).Error
 }
 
 // ListTrafficHistory 获取指定规则的历史数据（可选 node_id）

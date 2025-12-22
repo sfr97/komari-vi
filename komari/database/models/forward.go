@@ -39,9 +39,9 @@ type ForwardStat struct {
 // ForwardTrafficHistory 流量历史数据
 type ForwardTrafficHistory struct {
 	ID              uint      `json:"id" gorm:"primaryKey;autoIncrement"`
-	RuleID          uint      `json:"rule_id" gorm:"index:idx_rule_timestamp,priority:1"`
-	NodeID          string    `json:"node_id" gorm:"type:varchar(36);index:idx_node_timestamp,priority:1"`
-	Timestamp       LocalTime `json:"timestamp" gorm:"index:idx_rule_timestamp,priority:2;index:idx_node_timestamp,priority:2"`
+	RuleID          uint      `json:"rule_id" gorm:"uniqueIndex:idx_rule_node_ts,priority:1;index:idx_rule_timestamp,priority:1"`
+	NodeID          string    `json:"node_id" gorm:"type:varchar(36);uniqueIndex:idx_rule_node_ts,priority:2;index:idx_node_timestamp,priority:1"`
+	Timestamp       LocalTime `json:"timestamp" gorm:"uniqueIndex:idx_rule_node_ts,priority:3;index:idx_rule_timestamp,priority:2;index:idx_node_timestamp,priority:2"`
 	Connections     int       `json:"connections" gorm:"type:int"`
 	TrafficInBytes  int64     `json:"traffic_in_bytes" gorm:"type:bigint"`
 	TrafficOutBytes int64     `json:"traffic_out_bytes" gorm:"type:bigint"`

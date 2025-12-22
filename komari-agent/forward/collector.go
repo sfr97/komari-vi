@@ -2,7 +2,9 @@ package forward
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,29 +13,36 @@ import (
 
 // StatsCollector 周期性采集连接/流量与健康信息
 type StatsCollector struct {
-	health    *HealthChecker
-	interval  time.Duration
-	stop      chan struct{}
-	prevIn    iptCounters
-	prevOut   iptCounters
-	prevStamp time.Time
-	smoothIn  int64
-	smoothOut int64
-	alpha     float64
-	linkMonitor *LinkHealthMonitor
+	health            *HealthChecker
+	interval          time.Duration
+	stop              chan struct{}
+	prevIn            iptCounters
+	prevOut           iptCounters
+	prevStamp         time.Time
+	hasPrev           bool
+	smoothIn          int64
+	smoothOut         int64
+	alpha             float64
+	linkMonitor       *LinkHealthMonitor
+	relayNodeIDs      []string
+	activeRelayNodeID string
+	statsInfo         StatsInfo
 }
 
-func NewStatsCollector(health *HealthChecker, intervalSec int) *StatsCollector {
+func NewStatsCollector(health *HealthChecker, intervalSec int, relayNodeIDs []string, activeRelayNodeID string) *StatsCollector {
 	iv := time.Duration(intervalSec) * time.Second
 	if iv <= 0 {
 		iv = 10 * time.Second
 	}
 	return &StatsCollector{
-		health:    health,
-		interval:  iv,
-		stop:      make(chan struct{}),
-		prevStamp: time.Now(),
-		alpha:     0.3,
+		health:            health,
+		interval:          iv,
+		stop:              make(chan struct{}),
+		prevStamp:         time.Time{},
+		hasPrev:           false,
+		alpha:             0.3,
+		relayNodeIDs:      relayNodeIDs,
+		activeRelayNodeID: activeRelayNodeID,
 	}
 }
 
@@ -63,7 +72,11 @@ func (c *StatsCollector) StartLoop(conn *ws.SafeConn, ruleID uint, nodeID string
 }
 
 func (c *StatsCollector) pollOnce(conn *ws.SafeConn, ruleID uint, nodeID string, port int, protocol string) {
-	latency, ok := PingLatencyWithProtocol(protocol, fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	latency, ok := PingLatencyWithProtocol(protocol, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 2*time.Second)
+	if !ok {
+		// 兼容 IPv6-only 监听场景
+		latency, ok = PingLatencyWithProtocol(protocol, net.JoinHostPort("::1", strconv.Itoa(port)), 2*time.Second)
+	}
 	healthy := ok
 	c.health.RecordStatus(ruleID, nodeID, healthy, latency)
 	status := "healthy"
@@ -80,26 +93,46 @@ func (c *StatsCollector) pollOnce(conn *ws.SafeConn, ruleID uint, nodeID string,
 		}
 	}
 
-	in, out, err := ReadPortCounters(ruleID, port, protocol)
+	in, out, err := ReadPortCounters(c.statsInfo, ruleID, port, protocol)
 	if err != nil {
 		in = iptCounters{}
 		out = iptCounters{}
 	}
 	now := time.Now()
-	delta := now.Sub(c.prevStamp).Seconds()
 	var bpsIn, bpsOut int64
-	if delta > 0 {
-		bpsIn = int64(float64(in.Bytes-c.prevIn.Bytes) * 8 / delta)
-		bpsOut = int64(float64(out.Bytes-c.prevOut.Bytes) * 8 / delta)
+	if c.hasPrev {
+		delta := now.Sub(c.prevStamp).Seconds()
+		if delta > 0 {
+			inDelta := in.Bytes - c.prevIn.Bytes
+			outDelta := out.Bytes - c.prevOut.Bytes
+			if inDelta < 0 {
+				inDelta = 0
+			}
+			if outDelta < 0 {
+				outDelta = 0
+			}
+			bpsIn = int64(float64(inDelta) * 8 / delta)
+			bpsOut = int64(float64(outDelta) * 8 / delta)
+		}
 	}
 	bpsIn = c.smoothValue(&c.smoothIn, bpsIn)
 	bpsOut = c.smoothValue(&c.smoothOut, bpsOut)
 	c.prevIn = in
 	c.prevOut = out
 	c.prevStamp = now
+	c.hasPrev = true
 	activeConns := countActiveConnections(port, protocol)
 
-	sendForwardStats(conn, ruleID, nodeID, port, status, in.Bytes, out.Bytes, bpsIn, bpsOut, latency, activeConns)
+	nodesLatency := map[string]int64{"self": latency}
+	for _, rid := range c.relayNodeIDs {
+		if rid == "" {
+			continue
+		}
+		if st, ok := c.health.GetStatus(ruleID, rid); ok {
+			nodesLatency[rid] = st.LatencyMs
+		}
+	}
+	sendForwardStats(conn, ruleID, nodeID, port, status, in.Bytes, out.Bytes, bpsIn, bpsOut, nodesLatency, c.activeRelayNodeID, activeConns)
 }
 
 func (c *StatsCollector) smoothValue(prev *int64, current int64) int64 {

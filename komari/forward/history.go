@@ -11,8 +11,8 @@ import (
 
 var defaultHistoryLimit = 300
 
-// RecordTrafficHistory 将实时统计写入历史表（按系统设置聚合）
-func RecordTrafficHistory(stat *models.ForwardStat) {
+// RecordTrafficHistory 将实时统计写入历史表（按系统设置的时间桶写入增量）
+func RecordTrafficHistory(prev *models.ForwardStat, stat *models.ForwardStat) {
 	if stat == nil {
 		return
 	}
@@ -20,17 +20,29 @@ func RecordTrafficHistory(stat *models.ForwardStat) {
 	if err != nil {
 		return
 	}
-	bucket := bucketTime(time.Now(), settings.HistoryAggregatePeriod)
+	bucket := bucketTime(time.Now().UTC(), settings.HistoryAggregatePeriod)
+	inDelta := stat.TrafficInBytes
+	outDelta := stat.TrafficOutBytes
+	if prev != nil && prev.RuleID == stat.RuleID && prev.NodeID == stat.NodeID {
+		inDelta = stat.TrafficInBytes - prev.TrafficInBytes
+		outDelta = stat.TrafficOutBytes - prev.TrafficOutBytes
+		if inDelta < 0 {
+			inDelta = stat.TrafficInBytes
+		}
+		if outDelta < 0 {
+			outDelta = stat.TrafficOutBytes
+		}
+	}
 	entry := &models.ForwardTrafficHistory{
 		RuleID:          stat.RuleID,
 		NodeID:          stat.NodeID,
 		Timestamp:       models.FromTime(bucket),
 		Connections:     stat.ActiveConnections,
-		TrafficInBytes:  stat.TrafficInBytes,
-		TrafficOutBytes: stat.TrafficOutBytes,
+		TrafficInBytes:  inDelta,
+		TrafficOutBytes: outDelta,
 		AvgLatencyMs:    int(extractLatency(stat.NodesLatency)),
 	}
-	_ = dbforward.UpsertTrafficHistory(entry)
+	_ = dbforward.AddTrafficHistory(entry)
 }
 
 func bucketTime(ts time.Time, period string) time.Time {
@@ -42,7 +54,7 @@ func bucketTime(ts time.Time, period string) time.Time {
 	case "1hour", "hour":
 		return ts.Truncate(time.Hour)
 	case "1day", "day":
-		return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, ts.Location())
+		return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
 	default:
 		return ts.Truncate(time.Hour)
 	}

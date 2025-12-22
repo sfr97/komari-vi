@@ -80,22 +80,59 @@ const ForwardPage = () => {
 	const [selectedIds, setSelectedIds] = useState<number[]>([])
 	const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
-	const fetchRules = async () => {
-		setLoading(true)
+	const fetchRules = async (opts?: { silent?: boolean }) => {
+		if (!opts?.silent) setLoading(true)
 		try {
 			const res = await fetch('/api/v1/forwards')
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const body = await res.json()
 			setRules(body.data || [])
 		} catch (e: any) {
-			toast.error(e?.message || 'Load failed')
+			if (!opts?.silent) toast.error(e?.message || 'Load failed')
 		} finally {
-			setLoading(false)
+			if (!opts?.silent) setLoading(false)
 		}
 	}
 
 	useEffect(() => {
 		fetchRules()
+	}, [])
+
+	// WebSocket：接收转发配置同步等事件，自动刷新列表
+	useEffect(() => {
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+		const wsUrl = `${protocol}//${window.location.host}/api/v1/forwards/ws`
+		const ws = new WebSocket(wsUrl)
+		let timer: number | undefined
+
+		const scheduleRefresh = () => {
+			if (timer) return
+			timer = window.setTimeout(() => {
+				timer = undefined
+				fetchRules({ silent: true })
+			}, 500)
+		}
+
+		ws.onmessage = evt => {
+			try {
+				const msg = JSON.parse(evt.data)
+				if (msg?.event === 'forward_config_updated') {
+					scheduleRefresh()
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		ws.onerror = () => {
+			// ignore
+		}
+
+		return () => {
+			if (timer) window.clearTimeout(timer)
+			ws.close()
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [])
 
 	const handleSave = async (data: RuleFormState) => {

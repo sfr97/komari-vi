@@ -1,10 +1,12 @@
 package forward
 
 import (
+	"errors"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	"gorm.io/gorm"
 )
 
 func UpsertForwardStat(stat *models.ForwardStat) error {
@@ -13,6 +15,21 @@ func UpsertForwardStat(stat *models.ForwardStat) error {
 	return db.Where("rule_id = ? AND node_id = ?", stat.RuleID, stat.NodeID).
 		Assign(stat).
 		FirstOrCreate(stat).Error
+}
+
+func GetForwardStat(ruleID uint, nodeID string) (*models.ForwardStat, error) {
+	if ruleID == 0 || nodeID == "" {
+		return nil, nil
+	}
+	var stat models.ForwardStat
+	err := dbcore.GetDBInstance().Where("rule_id = ? AND node_id = ?", ruleID, nodeID).First(&stat).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &stat, nil
 }
 
 func GetForwardStats(ruleID uint) ([]models.ForwardStat, error) {

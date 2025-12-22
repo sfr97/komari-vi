@@ -10,17 +10,91 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
-	"github.com/komari-monitor/komari/database/clients"
 	dbforward "github.com/komari-monitor/komari/database/forward"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/forward"
 )
 
 type checkPortReq struct {
+	RuleID      uint   `json:"rule_id"`
 	NodeID      string `json:"node_id" binding:"required"`
 	PortSpec    string `json:"port_spec" binding:"required"`
 	Excluded    []int  `json:"excluded_ports"`
 	TimeoutSecs int    `json:"timeout"`
+}
+
+func collectReservedPortsForNode(nodeID string, excludeRuleID uint) []int {
+	rules, err := dbforward.ListForwardRules()
+	if err != nil {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	add := func(p int) {
+		if p <= 0 {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+	}
+	for _, rule := range rules {
+		if excludeRuleID > 0 && rule.ID == excludeRuleID {
+			continue
+		}
+		if rule.ConfigJSON == "" {
+			continue
+		}
+		var cfg forward.RuleConfig
+		if err := json.Unmarshal([]byte(rule.ConfigJSON), &cfg); err != nil {
+			continue
+		}
+		if cfg.EntryNodeID == nodeID {
+			add(forward.ResolvePortFallback(cfg.EntryPort, cfg.EntryCurrentPort))
+		}
+		switch strings.ToLower(rule.Type) {
+		case "relay_group":
+			for _, r := range cfg.Relays {
+				if r.NodeID == nodeID {
+					add(forward.ResolvePortFallback(r.Port, r.CurrentPort))
+				}
+			}
+		case "chain":
+			for _, hop := range cfg.Hops {
+				if strings.ToLower(hop.Type) == "direct" && hop.NodeID == nodeID {
+					add(forward.ResolvePortFallback(hop.Port, hop.CurrentPort))
+				}
+				if strings.ToLower(hop.Type) == "relay_group" {
+					for _, r := range hop.Relays {
+						if r.NodeID == nodeID {
+							add(forward.ResolvePortFallback(r.Port, r.CurrentPort))
+						}
+					}
+				}
+			}
+		}
+	}
+	ports := make([]int, 0, len(seen))
+	for p := range seen {
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+func mergeExcludedPorts(a []int, b []int) []int {
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(a)+len(b))
+	for _, v := range append(append([]int{}, a...), b...) {
+		if v <= 0 {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // CheckPort 调用 Agent 进行端口检测
@@ -34,14 +108,115 @@ func CheckPort(c *gin.Context) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	excluded := mergeExcludedPorts(req.Excluded, collectReservedPortsForNode(req.NodeID, req.RuleID))
 	resp, err := forward.SendTaskToNode(req.NodeID, forward.TaskCheckPort, forward.CheckPortRequest{
 		PortSpec:      req.PortSpec,
-		ExcludedPorts: req.Excluded,
+		ExcludedPorts: excluded,
 	}, timeout)
 	if err != nil && resp.Message == "" {
 		resp.Message = err.Error()
 	}
 	api.RespondSuccess(c, resp)
+}
+
+func allTaskSuccess(results []forward.AgentTaskResult) bool {
+	if len(results) == 0 {
+		return true
+	}
+	for _, r := range results {
+		if !r.Success {
+			return false
+		}
+	}
+	return true
+}
+
+func startForwardRule(rule *models.ForwardRule) ([]forward.AgentTaskResult, bool, error) {
+	if rule == nil {
+		return nil, false, fmt.Errorf("rule is nil")
+	}
+	template, err := dbforward.GetRealmConfigTemplate()
+	if err != nil {
+		return nil, false, err
+	}
+	settings, err := dbforward.GetSystemSettings()
+	if err != nil {
+		return nil, false, err
+	}
+
+	cfgs, err := forward.GenerateRealmConfigs(*rule, template.TemplateToml, resolveNodeIP)
+	if err != nil {
+		return nil, false, fmt.Errorf("config generate failed: %v", err)
+	}
+	var rc forward.RuleConfig
+	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
+	if entryCfg, ok := cfgs[rc.EntryNodeID]; ok && entryCfg != "" {
+		_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"realm_config": entryCfg})
+	}
+
+	requests := buildStartRequests(rule, cfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml)
+
+	// 1) 预备环境（realm 二进制 + 统计工具链）
+	prepareResults := make([]forward.AgentTaskResult, 0, len(requests))
+	for nodeID := range requests {
+		// 允许 RealmDownloadURL 为空：由 Agent 根据自身 Endpoint + Token + GOOS/GOARCH 自动拼接下载地址。
+		res, e := forward.SendTaskToNode(nodeID, forward.TaskPrepareForwardEnv, forward.PrepareForwardEnvRequest{
+			RealmDownloadURL: "",
+			ForceReinstall:   false,
+		}, 60*time.Second)
+		if e != nil && res.Message == "" {
+			res.Message = e.Error()
+		}
+		prepareResults = append(prepareResults, res)
+	}
+	if !allTaskSuccess(prepareResults) {
+		return prepareResults, false, nil
+	}
+
+	// 2) 启动 Realm
+	results := make([]forward.AgentTaskResult, 0, len(requests))
+	for nodeID, startReq := range requests {
+		res, err := forward.SendTaskToNode(nodeID, forward.TaskStartRealm, startReq, 20*time.Second)
+		if err != nil && res.Message == "" {
+			res.Message = err.Error()
+		}
+		results = append(results, res)
+	}
+	ok := allTaskSuccess(results) && allTaskSuccess(prepareResults)
+	merged := append(prepareResults, results...)
+	return merged, ok, nil
+}
+
+func stopForwardRule(rule *models.ForwardRule) ([]forward.AgentTaskResult, bool, error) {
+	if rule == nil {
+		return nil, false, fmt.Errorf("rule is nil")
+	}
+	settings, err := dbforward.GetSystemSettings()
+	if err != nil {
+		return nil, false, err
+	}
+	var rc forward.RuleConfig
+	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
+	protocol := strings.TrimSpace(rc.Protocol)
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	results := make([]forward.AgentTaskResult, 0)
+	for nodeID, port := range collectNodePorts(rule) {
+		req := forward.StopRealmRequest{
+			RuleID:   rule.ID,
+			NodeID:   nodeID,
+			Protocol: protocol,
+			Port:     port,
+			Timeout:  settings.ProcessStopTimeout,
+		}
+		res, err := forward.SendTaskToNode(nodeID, forward.TaskStopRealm, req, 10*time.Second)
+		if err != nil && res.Message == "" {
+			res.Message = err.Error()
+		}
+		results = append(results, res)
+	}
+	return results, allTaskSuccess(results), nil
 }
 
 // StartForward 启动规则（入口+相关节点），当前实现直连/中继组/链式
@@ -56,39 +231,16 @@ func StartForward(c *gin.Context) {
 		api.RespondError(c, http.StatusNotFound, err.Error())
 		return
 	}
-	template, err := dbforward.GetRealmConfigTemplate()
+	results, ok, err := startForwardRule(rule)
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	settings, err := dbforward.GetSystemSettings()
-	if err != nil {
-		api.RespondError(c, http.StatusInternalServerError, err.Error())
-		return
+	status := "running"
+	if !ok {
+		status = "error"
 	}
-
-	cfgs, err := forward.GenerateRealmConfigs(*rule, template.TemplateToml, resolveNodeIP)
-	if err != nil {
-		api.RespondError(c, http.StatusBadRequest, fmt.Sprintf("config generate failed: %v", err))
-		return
-	}
-	var rc forward.RuleConfig
-	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
-	if entryCfg, ok := cfgs[rc.EntryNodeID]; ok && entryCfg != "" {
-		_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"realm_config": entryCfg})
-	}
-
-	targets := collectNodes(rule)
-	results := make([]forward.AgentTaskResult, 0, len(targets))
-		for nodeID, startReq := range buildStartRequests(rule, cfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml) {
-		res, err := forward.SendTaskToNode(nodeID, forward.TaskStartRealm, startReq, 20*time.Second)
-		if err != nil && res.Message == "" {
-			res.Message = err.Error()
-		}
-		results = append(results, res)
-	}
-
-	_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"status": "running"})
+	_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"status": status})
 	api.RespondSuccess(c, results)
 }
 
@@ -104,33 +256,16 @@ func StopForward(c *gin.Context) {
 		api.RespondError(c, http.StatusNotFound, err.Error())
 		return
 	}
-	settings, err := dbforward.GetSystemSettings()
+	results, ok, err := stopForwardRule(rule)
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var rc forward.RuleConfig
-	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
-	protocol := strings.TrimSpace(rc.Protocol)
-	if protocol == "" {
-		protocol = "tcp"
+	status := "stopped"
+	if !ok {
+		status = "error"
 	}
-	results := make([]forward.AgentTaskResult, 0)
-	for nodeID, port := range collectNodePorts(rule) {
-		req := forward.StopRealmRequest{
-			RuleID: rule.ID,
-			NodeID: nodeID,
-			Protocol: protocol,
-			Port:   port,
-			Timeout: settings.ProcessStopTimeout,
-		}
-		res, err := forward.SendTaskToNode(nodeID, forward.TaskStopRealm, req, 10*time.Second)
-		if err != nil && res.Message == "" {
-			res.Message = err.Error()
-		}
-		results = append(results, res)
-	}
-	_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"status": "stopped"})
+	_ = dbforward.UpdateForwardRule(rule.ID, map[string]interface{}{"status": status})
 	api.RespondSuccess(c, results)
 }
 
@@ -182,20 +317,6 @@ func ApplyForwardConfigs(c *gin.Context) {
 	api.RespondSuccess(c, results)
 }
 
-func resolveNodeIP(nodeID string) (string, error) {
-	cli, err := clients.GetClientByUUID(nodeID)
-	if err != nil {
-		return "", err
-	}
-	if ip := strings.TrimSpace(cli.IPv4); ip != "" {
-		return ip, nil
-	}
-	if ip := strings.TrimSpace(cli.IPv6); ip != "" {
-		return ip, nil
-	}
-	return "", fmt.Errorf("node %s has no IP", nodeID)
-}
-
 func collectNodes(rule *models.ForwardRule) []string {
 	var cfg forward.RuleConfig
 	_ = json.Unmarshal([]byte(rule.ConfigJSON), &cfg)
@@ -240,16 +361,16 @@ func buildStartRequests(rule *models.ForwardRule, cfgs map[string]string, statsI
 
 	add := func(nodeID string, port int, config string) {
 		requests[nodeID] = forward.StartRealmRequest{
-			RuleID:        rule.ID,
-			NodeID:        nodeID,
-			EntryNodeID:   rc.EntryNodeID,
-			Protocol:      protocol,
-			Config:        config,
-			Port:          port,
-			StatsInterval: statsInterval,
+			RuleID:              rule.ID,
+			NodeID:              nodeID,
+			EntryNodeID:         rc.EntryNodeID,
+			Protocol:            protocol,
+			Config:              config,
+			Port:                port,
+			StatsInterval:       statsInterval,
 			HealthCheckInterval: healthInterval,
-			CrashRestartLimit: crashLimit,
-			StopTimeout:       stopTimeout,
+			CrashRestartLimit:   crashLimit,
+			StopTimeout:         stopTimeout,
 		}
 	}
 
@@ -383,15 +504,15 @@ func buildUpdateRequests(rule *models.ForwardRule, cfgs map[string]string, stats
 
 	add := func(nodeID string, port int, config string) {
 		requests[nodeID] = forward.UpdateRealmRequest{
-			RuleID:        rule.ID,
-			NodeID:        nodeID,
-			Protocol:      protocol,
-			NewConfig:     config,
-			NewPort:       port,
-			StatsInterval: statsInterval,
+			RuleID:              rule.ID,
+			NodeID:              nodeID,
+			Protocol:            protocol,
+			NewConfig:           config,
+			NewPort:             port,
+			StatsInterval:       statsInterval,
 			HealthCheckInterval: healthInterval,
-			CrashRestartLimit: crashLimit,
-			StopTimeout:       stopTimeout,
+			CrashRestartLimit:   crashLimit,
+			StopTimeout:         stopTimeout,
 		}
 	}
 
@@ -442,74 +563,16 @@ func buildUpdateRequests(rule *models.ForwardRule, cfgs map[string]string, stats
 }
 
 func buildHealthTargets(ruleType string, cfg forward.RuleConfig) (string, string) {
+	cfg.Type = ruleType
 	targetHost, targetPort := resolveTarget(cfg)
 	endToEnd := ""
 	if targetHost != "" && targetPort > 0 {
 		endToEnd = fmt.Sprintf("%s:%d", targetHost, targetPort)
 	}
-	nextHost, nextPort := resolveEntryNextHop(cfg, ruleType)
+	nextHost, nextPort := resolveEntryNextHop(cfg)
 	nextHop := ""
 	if nextHost != "" && nextPort > 0 {
 		nextHop = fmt.Sprintf("%s:%d", nextHost, nextPort)
 	}
 	return nextHop, endToEnd
-}
-
-func resolveTarget(cfg forward.RuleConfig) (string, int) {
-	if strings.ToLower(cfg.TargetType) == "node" {
-		host, _ := resolveNodeIP(cfg.TargetNodeID)
-		return host, cfg.TargetPort
-	}
-	return cfg.TargetHost, cfg.TargetPort
-}
-
-func resolveEntryNextHop(cfg forward.RuleConfig, ruleType string) (string, int) {
-	switch strings.ToLower(ruleType) {
-	case "direct":
-		return resolveTarget(cfg)
-	case "relay_group":
-		nodeID := cfg.ActiveRelayNode
-		if nodeID == "" && len(cfg.Relays) > 0 {
-			nodeID = forward.SortRelays(cfg.Relays)[0].NodeID
-		}
-		host, _ := resolveNodeIP(nodeID)
-		var port int
-		for _, r := range cfg.Relays {
-			if r.NodeID == nodeID {
-				port = forward.ResolvePortFallback(r.Port, r.CurrentPort)
-				break
-			}
-		}
-		return host, port
-	case "chain":
-		if len(cfg.Hops) == 0 {
-			return "", 0
-		}
-		return resolveHopTarget(cfg.Hops[0])
-	default:
-		return "", 0
-	}
-}
-
-func resolveHopTarget(hop forward.ChainHop) (string, int) {
-	if strings.ToLower(hop.Type) == "direct" {
-		host, _ := resolveNodeIP(hop.NodeID)
-		return host, forward.ResolvePortFallback(hop.Port, hop.CurrentPort)
-	}
-	if strings.ToLower(hop.Type) == "relay_group" && len(hop.Relays) > 0 {
-		active := hop.ActiveRelayNode
-		if active == "" {
-			active = forward.SortRelays(hop.Relays)[0].NodeID
-		}
-		host, _ := resolveNodeIP(active)
-		var port int
-		for _, r := range hop.Relays {
-			if r.NodeID == active {
-				port = forward.ResolvePortFallback(r.Port, r.CurrentPort)
-				break
-			}
-		}
-		return host, port
-	}
-	return "", 0
 }

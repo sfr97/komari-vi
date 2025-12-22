@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type nodeChange struct {
+	RuleID    uint
 	NodeID    string
 	Action    string // start / stop / update
 	OldConfig string
@@ -51,10 +53,15 @@ func ApplyHotUpdate(oldRule, newRule *models.ForwardRule) error {
 	oldPorts := collectNodePorts(oldRule)
 	newPorts := collectNodePorts(newRule)
 
-	changes := detectNodeChanges(oldCfgs, newCfgs, oldPorts, newPorts)
+	changes := detectNodeChanges(newRule.ID, oldCfgs, newCfgs, oldPorts, newPorts)
 	if len(changes) == 0 {
 		return nil
 	}
+	oldStartReqs := buildStartRequests(oldRule, oldCfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml)
+	oldUpdateReqs := buildUpdateRequests(oldRule, oldCfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml)
+	newStartReqs := buildStartRequests(newRule, newCfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml)
+	newUpdateReqs := buildUpdateRequests(newRule, newCfgs, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout, template.TemplateToml)
+
 	order := updateOrder(newRule, changes)
 	applied := make([]nodeChange, 0, len(order))
 	for _, nodeID := range order {
@@ -62,8 +69,8 @@ func ApplyHotUpdate(oldRule, newRule *models.ForwardRule) error {
 		if !ok {
 			continue
 		}
-		if err := applyNodeChange(newRule, change, oldProto, newProto, template.TemplateToml, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout); err != nil {
-			rollbackChanges(newRule, applied, oldProto, newProto, template.TemplateToml, settings.StatsReportInterval, settings.HealthCheckInterval, settings.RealmCrashRestartLimit, settings.ProcessStopTimeout)
+		if err := applyNodeChange(change, oldProto, newProto, newStartReqs, newUpdateReqs, settings.ProcessStopTimeout); err != nil {
+			rollbackChanges(oldProto, newProto, applied, oldStartReqs, oldUpdateReqs, newPorts, settings.ProcessStopTimeout)
 			return fmt.Errorf("hot update failed at node %s: %w", nodeID, err)
 		}
 		applied = append(applied, change)
@@ -71,7 +78,7 @@ func ApplyHotUpdate(oldRule, newRule *models.ForwardRule) error {
 	return nil
 }
 
-func detectNodeChanges(oldCfgs, newCfgs map[string]string, oldPorts, newPorts map[string]int) map[string]nodeChange {
+func detectNodeChanges(ruleID uint, oldCfgs, newCfgs map[string]string, oldPorts, newPorts map[string]int) map[string]nodeChange {
 	nodes := make(map[string]struct{})
 	for k := range oldCfgs {
 		nodes[k] = struct{}{}
@@ -84,6 +91,7 @@ func detectNodeChanges(oldCfgs, newCfgs map[string]string, oldPorts, newPorts ma
 		oldCfg := oldCfgs[nodeID]
 		newCfg := newCfgs[nodeID]
 		change := nodeChange{
+			RuleID:    ruleID,
 			NodeID:    nodeID,
 			OldConfig: oldCfg,
 			NewConfig: newCfg,
@@ -105,14 +113,14 @@ func detectNodeChanges(oldCfgs, newCfgs map[string]string, oldPorts, newPorts ma
 	return out
 }
 
-func applyNodeChange(rule *models.ForwardRule, change nodeChange, oldProtocol string, newProtocol string, templateToml string, statsInterval int, healthInterval int, crashLimit int, stopTimeout int) error {
+func applyNodeChange(change nodeChange, oldProtocol string, newProtocol string, startReqs map[string]StartRealmRequest, updateReqs map[string]UpdateRealmRequest, stopTimeout int) error {
 	switch change.Action {
 	case "stop":
 		req := StopRealmRequest{
-			RuleID: rule.ID,
-			NodeID: change.NodeID,
+			RuleID:   change.RuleID,
+			NodeID:   change.NodeID,
 			Protocol: oldProtocol,
-			Port:   change.OldPort,
+			Port:     change.OldPort,
 		}
 		if stopTimeout > 0 {
 			req.Timeout = stopTimeout
@@ -120,14 +128,19 @@ func applyNodeChange(rule *models.ForwardRule, change nodeChange, oldProtocol st
 		_, err := SendTaskToNode(change.NodeID, TaskStopRealm, req, 15*time.Second)
 		return err
 	case "start":
-		startReqs := buildStartRequests(rule, map[string]string{change.NodeID: change.NewConfig}, statsInterval, healthInterval, crashLimit, stopTimeout, templateToml)
 		if req, ok := startReqs[change.NodeID]; ok {
+			// 新增节点可能尚未准备环境（realm 二进制/统计工具），先做一次 PREPARE（由 Agent 自行拼接下载 URL）。
+			if _, err := SendTaskToNode(change.NodeID, TaskPrepareForwardEnv, PrepareForwardEnvRequest{
+				RealmDownloadURL: "",
+				ForceReinstall:   false,
+			}, 60*time.Second); err != nil {
+				return err
+			}
 			req.Protocol = newProtocol
 			_, err := SendTaskToNode(change.NodeID, TaskStartRealm, req, 20*time.Second)
 			return err
 		}
 	case "update":
-		updateReqs := buildUpdateRequests(rule, map[string]string{change.NodeID: change.NewConfig}, statsInterval, healthInterval, crashLimit, stopTimeout, templateToml)
 		if req, ok := updateReqs[change.NodeID]; ok {
 			req.Protocol = newProtocol
 			if stopTimeout > 0 {
@@ -140,36 +153,32 @@ func applyNodeChange(rule *models.ForwardRule, change nodeChange, oldProtocol st
 	return nil
 }
 
-func rollbackChanges(rule *models.ForwardRule, applied []nodeChange, oldProtocol string, newProtocol string, templateToml string, statsInterval int, healthInterval int, crashLimit int, stopTimeout int) {
+func rollbackChanges(oldProtocol string, newProtocol string, applied []nodeChange, oldStartReqs map[string]StartRealmRequest, oldUpdateReqs map[string]UpdateRealmRequest, newPorts map[string]int, stopTimeout int) {
 	for i := len(applied) - 1; i >= 0; i-- {
 		change := applied[i]
 		switch change.Action {
 		case "start":
 			req := StopRealmRequest{
-				RuleID: rule.ID,
-				NodeID: change.NodeID,
+				RuleID:   change.RuleID,
+				NodeID:   change.NodeID,
 				Protocol: newProtocol,
-				Port:   change.NewPort,
+				Port:     newPorts[change.NodeID],
 			}
 			if stopTimeout > 0 {
 				req.Timeout = stopTimeout
 			}
 			_, _ = SendTaskToNode(change.NodeID, TaskStopRealm, req, 10*time.Second)
 		case "stop":
-			if change.OldConfig == "" {
-				continue
-			}
-			startReqs := buildStartRequests(rule, map[string]string{change.NodeID: change.OldConfig}, statsInterval, healthInterval, crashLimit, stopTimeout, templateToml)
-			if req, ok := startReqs[change.NodeID]; ok {
+			if req, ok := oldStartReqs[change.NodeID]; ok {
+				_, _ = SendTaskToNode(change.NodeID, TaskPrepareForwardEnv, PrepareForwardEnvRequest{
+					RealmDownloadURL: "",
+					ForceReinstall:   false,
+				}, 60*time.Second)
 				req.Protocol = oldProtocol
 				_, _ = SendTaskToNode(change.NodeID, TaskStartRealm, req, 10*time.Second)
 			}
 		case "update":
-			if change.OldConfig == "" {
-				continue
-			}
-			updateReqs := buildUpdateRequests(rule, map[string]string{change.NodeID: change.OldConfig}, statsInterval, healthInterval, crashLimit, stopTimeout, templateToml)
-			if req, ok := updateReqs[change.NodeID]; ok {
+			if req, ok := oldUpdateReqs[change.NodeID]; ok {
 				req.Protocol = oldProtocol
 				if stopTimeout > 0 {
 					req.StopTimeout = stopTimeout
@@ -304,16 +313,16 @@ func buildStartRequests(rule *models.ForwardRule, cfgs map[string]string, statsI
 	requests := make(map[string]StartRealmRequest)
 	add := func(nodeID string, port int, config string) {
 		requests[nodeID] = StartRealmRequest{
-			RuleID:        rule.ID,
-			NodeID:        nodeID,
-			EntryNodeID:   rc.EntryNodeID,
-			Protocol:      protocol,
-			Config:        config,
-			Port:          port,
-			StatsInterval: statsInterval,
+			RuleID:              rule.ID,
+			NodeID:              nodeID,
+			EntryNodeID:         rc.EntryNodeID,
+			Protocol:            protocol,
+			Config:              config,
+			Port:                port,
+			StatsInterval:       statsInterval,
 			HealthCheckInterval: healthInterval,
-			CrashRestartLimit: crashLimit,
-			StopTimeout:       stopTimeout,
+			CrashRestartLimit:   crashLimit,
+			StopTimeout:         stopTimeout,
 		}
 	}
 
@@ -373,15 +382,15 @@ func buildUpdateRequests(rule *models.ForwardRule, cfgs map[string]string, stats
 	requests := make(map[string]UpdateRealmRequest)
 	add := func(nodeID string, port int, config string) {
 		requests[nodeID] = UpdateRealmRequest{
-			RuleID:        rule.ID,
-			NodeID:        nodeID,
-			Protocol:      protocol,
-			NewConfig:     config,
-			NewPort:       port,
-			StatsInterval: statsInterval,
+			RuleID:              rule.ID,
+			NodeID:              nodeID,
+			Protocol:            protocol,
+			NewConfig:           config,
+			NewPort:             port,
+			StatsInterval:       statsInterval,
 			HealthCheckInterval: healthInterval,
-			CrashRestartLimit: crashLimit,
-			StopTimeout:       stopTimeout,
+			CrashRestartLimit:   crashLimit,
+			StopTimeout:         stopTimeout,
 		}
 	}
 
@@ -434,12 +443,12 @@ func buildHealthTargets(ruleType string, cfg RuleConfig) (string, string) {
 	targetHost, targetPort := resolveTarget(cfg)
 	endToEnd := ""
 	if targetHost != "" && targetPort > 0 {
-		endToEnd = fmt.Sprintf("%s:%d", targetHost, targetPort)
+		endToEnd = net.JoinHostPort(targetHost, fmt.Sprintf("%d", targetPort))
 	}
 	nextHost, nextPort := resolveEntryNextHop(cfg, ruleType)
 	nextHop := ""
 	if nextHost != "" && nextPort > 0 {
-		nextHop = fmt.Sprintf("%s:%d", nextHost, nextPort)
+		nextHop = net.JoinHostPort(nextHost, fmt.Sprintf("%d", nextPort))
 	}
 	return nextHop, endToEnd
 }

@@ -1,10 +1,8 @@
 package admin
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -150,23 +148,4 @@ func firstFile(files map[string][]*multipart.FileHeader) *multipart.FileHeader {
 		}
 	}
 	return nil
-}
-
-func saveUploadedFileWithHash(f *multipart.FileHeader, dst string) (int64, string, error) {
-	src, err := f.Open()
-	if err != nil {
-		return 0, "", err
-	}
-	defer src.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return 0, "", err
-	}
-	defer out.Close()
-	hasher := sha256.New()
-	size, err := io.Copy(io.MultiWriter(out, hasher), src)
-	if err != nil {
-		return 0, "", err
-	}
-	return size, fmt.Sprintf("%x", hasher.Sum(nil)), nil
 }

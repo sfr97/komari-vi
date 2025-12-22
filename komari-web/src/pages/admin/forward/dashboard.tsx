@@ -15,6 +15,7 @@ type ForwardStat = {
 	realtime_bps_in: number
 	realtime_bps_out: number
 	nodes_latency: string
+	active_relay_node_id?: string
 }
 
 type ForwardHistory = {
@@ -61,6 +62,8 @@ const ForwardDashboard = () => {
 	const [topology, setTopology] = useState<Topology | null>(null)
 	const [totals, setTotals] = useState({ connections: 0, in: 0, out: 0 })
 	const [alerts, setAlerts] = useState<AlertHistory[]>([])
+	const [entryStat, setEntryStat] = useState<ForwardStat | null>(null)
+	const [trafficSeries, setTrafficSeries] = useState<{ time: string; in: number; out: number }[]>([])
 
 	const fetchStats = async () => {
 		if (!ruleId) return
@@ -69,10 +72,18 @@ const ForwardDashboard = () => {
 		const body = await res.json()
 		setStats(body.data?.stats || [])
 		setHistory(body.data?.history || [])
+		setEntryStat(body.data?.entry_status || null)
 		setTotals({
 			connections: body.data?.total_connections || 0,
 			in: body.data?.total_traffic_in || 0,
 			out: body.data?.total_traffic_out || 0
+		})
+		const bpsIn = Number(body.data?.entry_status?.realtime_bps_in || 0)
+		const bpsOut = Number(body.data?.entry_status?.realtime_bps_out || 0)
+		const point = { time: new Date().toLocaleTimeString(), in: bpsIn / 1_000_000, out: bpsOut / 1_000_000 }
+		setTrafficSeries(prev => {
+			const next = [...prev, point]
+			return next.length > 60 ? next.slice(next.length - 60) : next
 		})
 	}
 
@@ -110,6 +121,26 @@ const ForwardDashboard = () => {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ruleId])
 
+	useEffect(() => {
+		if (trafficSeries.length > 0) return
+		if (!history.length) return
+		let bucketSeconds = 60
+		if (history.length >= 2) {
+			const a = new Date(history[history.length - 2].timestamp).getTime()
+			const b = new Date(history[history.length - 1].timestamp).getTime()
+			const diff = Math.max(1, Math.round((b - a) / 1000))
+			// 限制合理区间，避免异常数据导致图表比例失真
+			bucketSeconds = Math.min(24 * 3600, Math.max(10, diff))
+		}
+		const points = history.slice(Math.max(0, history.length - 60)).map(item => {
+			const ts = new Date(item.timestamp)
+			const inMbps = (Number(item.traffic_in_bytes || 0) * 8) / bucketSeconds / 1_000_000
+			const outMbps = (Number(item.traffic_out_bytes || 0) * 8) / bucketSeconds / 1_000_000
+			return { time: ts.toLocaleTimeString(), in: inMbps, out: outMbps }
+		})
+		setTrafficSeries(points)
+	}, [history, trafficSeries.length])
+
 	const formatBytes = (bytes?: number) => {
 		if (!bytes) return '0 B'
 		const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -123,24 +154,20 @@ const ForwardDashboard = () => {
 		return `${value.toFixed(fixed)} ${units[idx]}`
 	}
 
-	const chartData = useMemo(
-		() =>
-			history.map(item => ({
-				time: new Date(item.timestamp).toLocaleTimeString(),
-				in: item.traffic_in_bytes,
-				out: item.traffic_out_bytes
-			})),
-		[history]
-	)
+	const latencyMap = useMemo(() => parseLatencyMap(entryStat?.nodes_latency), [entryStat])
 
-	const latencyData = useMemo(
-		() =>
-			stats.map(s => ({
-				name: s.node_id,
-				latency: parseLatency(s.nodes_latency)
-			})),
-		[stats]
-	)
+	const latencyData = useMemo(() => {
+		if (topology?.type === 'relay_group' && topology?.relays?.length) {
+			return topology.relays.map(r => ({
+				name: r.name || r.node_id,
+				latency: Number(latencyMap[r.node_id] || 0)
+			}))
+		}
+		return stats.map(s => ({
+			name: s.node_id,
+			latency: parseLatency(s.nodes_latency)
+		}))
+	}, [latencyMap, stats, topology])
 
 	const entryStatus = topology?.entry?.status || 'unknown'
 	const statusColor = (status: string) => {
@@ -149,6 +176,20 @@ const ForwardDashboard = () => {
 		if (status === 'faulty') return 'red'
 		return 'gray'
 	}
+
+	const activeRelayInfo = useMemo(() => {
+		if (!topology) return null
+		if (topology.type === 'relay_group') {
+			const activeId = topology.active_relay_node_id
+			if (!activeId) return null
+			const relay = topology.relays?.find(r => r.node_id === activeId)
+			return {
+				name: relay?.name || activeId,
+				latency: Number(latencyMap[activeId] || 0)
+			}
+		}
+		return null
+	}, [latencyMap, topology])
 
 	const ackAlert = async (alertId: number) => {
 		if (!ruleId) return
@@ -203,6 +244,12 @@ const ForwardDashboard = () => {
 						<Text>→</Text>
 						<Badge color="gray">{topology?.target?.name || topology?.target?.ip || '-'}</Badge>
 					</div>
+					{activeRelayInfo && (
+						<Text size="2" color="gray" className="mt-2 block">
+							{t('forward.activeRelay', { defaultValue: '当前活动' })}: {activeRelayInfo.name}{' '}
+							{activeRelayInfo.latency ? `(${activeRelayInfo.latency}ms)` : ''}
+						</Text>
+					)}
 				</Card>
 
 				<Card>
@@ -225,10 +272,10 @@ const ForwardDashboard = () => {
 					<ChartContainer
 						className="mt-2 h-[220px]"
 						config={{
-							in: { label: t('forward.trafficIn', { defaultValue: '入口' }), color: 'var(--chart-1)' },
-							out: { label: t('forward.trafficOut', { defaultValue: '出口' }), color: 'var(--chart-2)' }
+							in: { label: `${t('forward.trafficIn', { defaultValue: '入口' })} (Mbps)`, color: 'var(--chart-1)' },
+							out: { label: `${t('forward.trafficOut', { defaultValue: '出口' })} (Mbps)`, color: 'var(--chart-2)' }
 						}}>
-						<LineChart data={chartData}>
+						<LineChart data={trafficSeries}>
 							<CartesianGrid strokeDasharray="3 3" />
 							<XAxis dataKey="time" />
 							<YAxis />
@@ -310,6 +357,21 @@ function parseLatency(raw?: string) {
 		return values.length ? Number(values[0]) : 0
 	} catch {
 		return 0
+	}
+}
+
+function parseLatencyMap(raw?: string): Record<string, number> {
+	if (!raw) return {}
+	try {
+		const data = JSON.parse(raw)
+		if (!data || typeof data !== 'object') return {}
+		const out: Record<string, number> = {}
+		for (const [k, v] of Object.entries(data)) {
+			out[String(k)] = Number(v)
+		}
+		return out
+	} catch {
+		return {}
 	}
 }
 

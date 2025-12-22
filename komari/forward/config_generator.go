@@ -3,6 +3,7 @@ package forward
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -189,7 +190,7 @@ func buildEntryConfig(ruleID uint, nodeID string, protocol string, listenPort in
 	}
 	sb.WriteString("[[endpoints]]\n")
 	sb.WriteString(fmt.Sprintf("listen = \"0.0.0.0:%d\"\n", listenPort))
-	sb.WriteString(fmt.Sprintf("remote = \"%s:%d\"\n", targetHost, targetPort))
+	sb.WriteString(fmt.Sprintf("remote = \"%s\"\n", net.JoinHostPort(targetHost, fmt.Sprintf("%d", targetPort))))
 	if len(extra) > 0 {
 		quoted := make([]string, 0, len(extra))
 		for _, e := range extra {
@@ -388,7 +389,7 @@ func relayAddresses(relays []RelayNode, resolver NodeResolver) ([]string, error)
 			return nil, err
 		}
 		port := resolvePortFallback(r.Port, r.CurrentPort)
-		addrs = append(addrs, fmt.Sprintf("%s:%d", host, port))
+		addrs = append(addrs, net.JoinHostPort(host, fmt.Sprintf("%d", port)))
 	}
 	return addrs, nil
 }
@@ -464,7 +465,7 @@ func hopTargets(hop ChainHop, resolver NodeResolver) ([]string, error) {
 		if port == 0 {
 			return nil, fmt.Errorf("hop port missing for node %s", hop.NodeID)
 		}
-		return []string{fmt.Sprintf("%s:%d", host, port)}, nil
+		return []string{net.JoinHostPort(host, fmt.Sprintf("%d", port))}, nil
 	default:
 		return nil, fmt.Errorf("unsupported hop type: %s", hop.Type)
 	}
@@ -481,10 +482,17 @@ func nextHopTarget(currentIndex int, hops []ChainHop, finalTargetHost string, fi
 		}
 		return nextTargets[0], nil
 	}
-	return fmt.Sprintf("%s:%d", finalTargetHost, finalTargetPort), nil
+	return net.JoinHostPort(finalTargetHost, fmt.Sprintf("%d", finalTargetPort)), nil
 }
 
 func splitHostPort(address string) (string, int) {
+	address = strings.TrimSpace(address)
+	if host, portStr, err := net.SplitHostPort(address); err == nil {
+		var port int
+		fmt.Sscanf(portStr, "%d", &port)
+		return host, port
+	}
+	// 兼容旧格式（不支持 IPv6 无 [] 字面量）
 	if idx := strings.LastIndex(address, ":"); idx != -1 {
 		host := address[:idx]
 		var port int

@@ -10,7 +10,7 @@ import (
 
 var (
 	connectedClients = make(map[string]*SafeConn)
-	ConnectedUsers   = []*websocket.Conn{}
+	ConnectedUsers   = map[*websocket.Conn]struct{}{}
 	latestReport     = make(map[string]*common.Report)
 	// presenceOnly stores online state for non-WebSocket agents (e.g., Nezha gRPC)
 	// value keeps connectionID and a soft expiration to avoid flicker
@@ -20,6 +20,24 @@ var (
 	})
 	mu = sync.RWMutex{}
 )
+
+func AddConnectedUser(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	ConnectedUsers[conn] = struct{}{}
+}
+
+func RemoveConnectedUser(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	delete(ConnectedUsers, conn)
+}
 
 func GetConnectedClients() map[string]*SafeConn {
 	mu.RLock()

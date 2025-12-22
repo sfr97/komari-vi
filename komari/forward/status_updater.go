@@ -12,18 +12,23 @@ import (
 
 // UpdateStatsAndBroadcast 写入 forward_stats 并通过 WS 向前端推送
 func UpdateStatsAndBroadcast(stat *models.ForwardStat) {
-	_ = dbforward.UpsertForwardStat(stat) // ignore error here; caller可自行处理
-	if totalConns, totalIn, totalOut, err := dbforward.AggregateForwardStats(stat.RuleID); err == nil {
-		_ = dbforward.UpdateForwardRule(stat.RuleID, map[string]interface{}{
-			"total_connections": totalConns,
-			"total_traffic_in":  totalIn,
-			"total_traffic_out": totalOut,
-		})
+	if stat == nil {
+		return
 	}
+	prev, _ := dbforward.GetForwardStat(stat.RuleID, stat.NodeID)
+	_ = dbforward.UpsertForwardStat(stat) // ignore error here; caller可自行处理
 	entryID, overallStatus, prevStatus := deriveOverallStatus(stat.RuleID)
 	if entryID != "" && overallStatus != "" {
 		if entryID == stat.NodeID {
 			stat.LinkStatus = overallStatus
+		}
+		// 仅使用入口节点的统计作为规则聚合，避免多跳重复计数
+		if entryID == stat.NodeID {
+			_ = dbforward.UpdateForwardRule(stat.RuleID, map[string]interface{}{
+				"total_connections": stat.ActiveConnections,
+				"total_traffic_in":  stat.TrafficInBytes,
+				"total_traffic_out": stat.TrafficOutBytes,
+			})
 		}
 		if overallStatus != prevStatus {
 			_ = dbforward.UpdateForwardStatStatus(stat.RuleID, entryID, overallStatus)
@@ -36,10 +41,9 @@ func UpdateStatsAndBroadcast(stat *models.ForwardStat) {
 			}
 		}
 	}
-	RecordTrafficHistory(stat)
+	RecordTrafficHistory(prev, stat)
 	EvaluateForwardAlerts(stat)
 
-	// WebSocket 推送事件格式与方案一致
 	type payload struct {
 		RuleID   uint                `json:"rule_id"`
 		NodeID   string              `json:"node_id"`
@@ -48,13 +52,17 @@ func UpdateStatsAndBroadcast(stat *models.ForwardStat) {
 		Reason   string              `json:"reason,omitempty"`
 		DateTime time.Time           `json:"timestamp"`
 	}
-	data, err := json.Marshal(payload{
-		RuleID:   stat.RuleID,
-		NodeID:   stat.NodeID,
-		Status:   stat.LinkStatus,
-		Stats:    stat,
-		DateTime: time.Now().UTC(),
-	})
+	envelope := map[string]interface{}{
+		"event": "forward_stats_update",
+		"data": payload{
+			RuleID:   stat.RuleID,
+			NodeID:   stat.NodeID,
+			Status:   stat.LinkStatus,
+			Stats:    stat,
+			DateTime: time.Now().UTC(),
+		},
+	}
+	data, err := json.Marshal(envelope)
 	if err == nil {
 		wsmsg.BroadcastToUsers("forward_stats_update", string(data))
 	}

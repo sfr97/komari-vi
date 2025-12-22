@@ -157,13 +157,32 @@ func EnableForward(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	rule, err := dbforward.GetForwardRule(id)
+	if err != nil {
+		api.RespondError(c, http.StatusNotFound, err.Error())
+		return
+	}
+
 	updates := map[string]interface{}{"is_enabled": true}
+	if rule != nil && rule.Status != "running" {
+		results, ok, startErr := startForwardRule(rule)
+		if startErr != nil {
+			api.RespondError(c, http.StatusInternalServerError, startErr.Error())
+			return
+		}
+		_ = results // 保持接口返回兼容性（前端仅需成功/失败）
+		if ok {
+			updates["status"] = "running"
+		} else {
+			updates["status"] = "error"
+		}
+	}
 	if err := dbforward.UpdateForwardRule(id, updates); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rule, _ := dbforward.GetForwardRule(id)
-	api.RespondSuccess(c, rule)
+	updated, _ := dbforward.GetForwardRule(id)
+	api.RespondSuccess(c, updated)
 }
 
 func DisableForward(c *gin.Context) {
@@ -172,13 +191,31 @@ func DisableForward(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	rule, err := dbforward.GetForwardRule(id)
+	if err != nil {
+		api.RespondError(c, http.StatusNotFound, err.Error())
+		return
+	}
 	updates := map[string]interface{}{"is_enabled": false}
+	if rule != nil && rule.Status == "running" {
+		results, ok, stopErr := stopForwardRule(rule)
+		if stopErr != nil {
+			api.RespondError(c, http.StatusInternalServerError, stopErr.Error())
+			return
+		}
+		_ = results
+		if ok {
+			updates["status"] = "stopped"
+		} else {
+			updates["status"] = "error"
+		}
+	}
 	if err := dbforward.UpdateForwardRule(id, updates); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rule, _ := dbforward.GetForwardRule(id)
-	api.RespondSuccess(c, rule)
+	updated, _ := dbforward.GetForwardRule(id)
+	api.RespondSuccess(c, updated)
 }
 
 func GetForwardSystemSettings(c *gin.Context) {

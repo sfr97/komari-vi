@@ -88,7 +88,7 @@ const RuleFormDialog = ({ open, initial, onClose, onSubmit }: Props) => {
 	const [structured, setStructured] = useState<StructuredConfig>({
 		entry_node_id: '',
 		entry_port: '',
-		protocol: 'tcp',
+		protocol: 'both',
 		target_type: 'custom',
 		target_node_id: '',
 		target_host: '',
@@ -134,7 +134,7 @@ const RuleFormDialog = ({ open, initial, onClose, onSubmit }: Props) => {
 				entry_node_id: parsed.entry_node_id || '',
 				entry_port: parsed.entry_port || '',
 				entry_current_port: parsed.entry_current_port || 0,
-				protocol: parsed.protocol || 'tcp',
+				protocol: parsed.protocol || 'both',
 				target_type: parsed.target_type || 'custom',
 				target_node_id: parsed.target_node_id || '',
 				target_host: parsed.target_host || '',
@@ -446,7 +446,7 @@ const RuleFormDialog = ({ open, initial, onClose, onSubmit }: Props) => {
 		const res = await fetch('/api/v1/forwards/check-port', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ node_id: nodeId, port_spec: portSpec })
+			body: JSON.stringify({ rule_id: initial.id, node_id: nodeId, port_spec: portSpec })
 		})
 		if (!res.ok) throw new Error(`HTTP ${res.status}`)
 		const body = await res.json()

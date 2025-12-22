@@ -38,6 +38,7 @@ import (
 	scriptsched "github.com/komari-monitor/komari/database/script"
 	"github.com/komari-monitor/komari/database/security"
 	"github.com/komari-monitor/komari/database/tasks"
+	"github.com/komari-monitor/komari/forward"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/cloudflared"
@@ -377,6 +378,7 @@ func RunServer() {
 			v1Forward.PUT("/system-settings", admin.UpdateForwardSystemSettings)
 			v1Forward.GET("/realm/default-config", admin.GetRealmTemplate)
 			v1Forward.PUT("/realm/default-config", admin.UpdateRealmTemplate)
+			v1Forward.GET("/ws", api.ForwardEventsWS)
 			v1Forward.POST("/check-port", admin.CheckPort)
 			v1Forward.POST("/preview-config", admin.PreviewForwardRealmConfig)
 			v1Forward.GET("/:id/alert-config", admin.GetForwardAlertConfig)
@@ -393,6 +395,8 @@ func RunServer() {
 		}
 		v1Realm := r.Group("/api/v1/realm", api.AdminAuthMiddleware())
 		{
+			v1Realm.GET("/default-config", admin.GetRealmTemplate)
+			v1Realm.PUT("/default-config", admin.UpdateRealmTemplate)
 			v1Realm.POST("/binaries", admin.UploadRealmBinary)
 			v1Realm.GET("/binaries", admin.ListRealmBinaries)
 			v1Realm.DELETE("/binaries/:id", admin.DeleteRealmBinary)
@@ -586,6 +590,8 @@ func DoScheduledWork() {
 			_ = tasks.AggregateSPPingRecords(cfg.SpRecordPreserveHours)
 			_ = tasks.CleanupSPPingRecords(cfg.SpRecordPreserveHours)
 			auditlog.RemoveOldLogs()
+			// 转发历史数据聚合/清理（每天运行一次，内部去重）
+			forward.MaybeRunHistoryMaintenance(time.Now())
 		case <-minute.C:
 			api.SaveClientReportToDB()
 			if !cfg.RecordEnabled {

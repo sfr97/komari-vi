@@ -45,6 +45,7 @@ func EvaluateForwardAlerts(stat *models.ForwardStat) {
 	_ = json.Unmarshal([]byte(rule.ConfigJSON), &rc)
 
 	candidates := buildAlertCandidates(stat, cfg, rule, rc)
+	markAlertClears(stat, cfg, rule, rc, candidates)
 	for _, cand := range candidates {
 		if cand.alertType == "" {
 			continue
@@ -53,6 +54,42 @@ func EvaluateForwardAlerts(stat *models.ForwardStat) {
 			continue
 		}
 		_ = sendForwardAlert(rule, cand)
+	}
+}
+
+func markAlertClears(stat *models.ForwardStat, cfg *models.ForwardAlertConfig, rule *models.ForwardRule, rc RuleConfig, candidates []alertCandidate) {
+	if stat == nil || cfg == nil || rule == nil {
+		return
+	}
+	isEntry := rc.EntryNodeID != "" && stat.NodeID == rc.EntryNodeID
+	active := map[string]struct{}{}
+	for _, c := range candidates {
+		if c.alertType != "" {
+			active[c.alertType] = struct{}{}
+		}
+	}
+	// 对本次评估涉及到的类型，如果当前没有触发，则视为已恢复（用于 ack 静默期内的再次触发放行）
+	check := []string{}
+	if cfg.NodeDownEnabled && !isEntry {
+		check = append(check, "node_down")
+	}
+	if cfg.LinkDegradedEnabled && isEntry {
+		check = append(check, "link_degraded")
+	}
+	if cfg.LinkFaultyEnabled && isEntry {
+		check = append(check, "link_faulty")
+	}
+	if cfg.HighLatencyEnabled {
+		check = append(check, "high_latency")
+	}
+	if cfg.TrafficSpikeEnabled && isEntry {
+		check = append(check, "traffic_spike")
+	}
+	for _, t := range check {
+		if _, ok := active[t]; ok {
+			continue
+		}
+		setAlertClearedAt(stat.RuleID, t, time.Now().UTC())
 	}
 }
 
@@ -130,7 +167,9 @@ func buildAlertCandidates(stat *models.ForwardStat, cfg *models.ForwardAlertConf
 	}
 
 	if cfg.TrafficSpikeEnabled {
-		if spike := checkTrafficSpike(stat, cfg.TrafficSpikeThreshold); spike {
+		// 避免多节点重复触发：仅入口节点判断流量突增
+		if isEntry {
+			if spike := checkTrafficSpike(stat, cfg.TrafficSpikeThreshold); spike {
 			candidates = append(candidates, alertCandidate{
 				alertType: "traffic_spike",
 				eventType: messageevent.ForwardTrafficSpike,
@@ -145,6 +184,7 @@ func buildAlertCandidates(stat *models.ForwardStat, cfg *models.ForwardAlertConf
 				},
 				emoji: "🚀",
 			})
+			}
 		}
 	}
 
@@ -190,6 +230,10 @@ func shouldSuppressAlert(ruleID uint, alertType string) bool {
 		return true
 	}
 	if last.AcknowledgedAt != nil && !last.AcknowledgedAt.ToTime().IsZero() && time.Since(last.AcknowledgedAt.ToTime()) < alertAckSilence {
+		// 若告警确认后已恢复过，则允许在静默期内再次触发
+		if clearedAt, ok := getAlertClearedAt(ruleID, alertType); ok && clearedAt.After(last.AcknowledgedAt.ToTime()) {
+			return false
+		}
 		return true
 	}
 	return false
@@ -221,33 +265,58 @@ func checkTrafficSpike(stat *models.ForwardStat, threshold float64) bool {
 	if threshold <= 1 {
 		threshold = 2.0
 	}
-	history, err := GetRecentTrafficHistory(stat.RuleID, stat.NodeID, 10)
-	if err != nil || len(history) < 2 {
+	history, err := GetRecentTrafficHistory(stat.RuleID, stat.NodeID, 12)
+	if err != nil || len(history) < 3 {
 		return false
 	}
-	var deltas []int64
-	for i := 1; i < len(history); i++ {
-		prev := history[i-1].TrafficInBytes + history[i-1].TrafficOutBytes
-		cur := history[i].TrafficInBytes + history[i].TrafficOutBytes
-		if cur >= prev {
-			deltas = append(deltas, cur-prev)
-		}
-	}
-	if len(deltas) == 0 {
-		return false
-	}
+	// history 表中存的是“桶内增量”，用最近桶的均值作为基线
 	var sum int64
-	for _, d := range deltas {
-		sum += d
+	var count int64
+	for i := 0; i < len(history)-1; i++ { // 排除最后一个桶（可能是刚写入不完整或波动较大）
+		v := history[i].TrafficInBytes + history[i].TrafficOutBytes
+		if v <= 0 {
+			continue
+		}
+		sum += v
+		count++
 	}
-	avg := sum / int64(len(deltas))
-	if avg == 0 {
+	if count == 0 {
 		return false
 	}
-	currentTotal := stat.TrafficInBytes + stat.TrafficOutBytes
-	last := history[len(history)-1].TrafficInBytes + history[len(history)-1].TrafficOutBytes
-	if currentTotal < last {
+	avgBytesPerBucket := sum / count
+	if avgBytesPerBucket <= 0 {
 		return false
 	}
-	return float64(currentTotal-last) > float64(avg)*threshold
+	bucketSeconds := float64(historyBucketSeconds())
+	if bucketSeconds <= 0 {
+		bucketSeconds = 60
+	}
+
+	avgBps := float64(avgBytesPerBucket) * 8 / bucketSeconds
+	currentBps := float64(stat.RealtimeBpsIn + stat.RealtimeBpsOut)
+	if currentBps <= 0 {
+		// fallback: 用最新桶的 bytes 与均值比较
+		lastBytes := history[len(history)-1].TrafficInBytes + history[len(history)-1].TrafficOutBytes
+		return float64(lastBytes) > float64(avgBytesPerBucket)*threshold
+	}
+	return currentBps > avgBps*threshold
+}
+
+func historyBucketSeconds() int64 {
+	settings, err := dbforward.GetSystemSettings()
+	if err != nil {
+		return 60
+	}
+	switch strings.ToLower(strings.TrimSpace(settings.HistoryAggregatePeriod)) {
+	case "10min":
+		return int64((10 * time.Minute).Seconds())
+	case "30min":
+		return int64((30 * time.Minute).Seconds())
+	case "1hour", "hour":
+		return int64(time.Hour.Seconds())
+	case "1day", "day":
+		return int64((24 * time.Hour).Seconds())
+	default:
+		return int64(time.Hour.Seconds())
+	}
 }

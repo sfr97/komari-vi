@@ -1,10 +1,12 @@
 package forward
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func parsePortSpec(portSpec string) ([]int, error) {
@@ -77,21 +79,51 @@ func parsePortSpec(portSpec string) ([]int, error) {
 }
 
 func isPortAvailable(port int) bool {
-	addr := fmt.Sprintf(":%d", port)
-
-	// TCP
-	tcpLn, err := net.Listen("tcp", addr)
-	if err != nil {
+	// 完整检查：同时覆盖 IPv4/IPv6（避免出现 v4 可用但 v6 已占用，或反之）。
+	if !canListenTCP("tcp4", fmt.Sprintf("0.0.0.0:%d", port)) {
 		return false
 	}
-	_ = tcpLn.Close()
-
-	// UDP
-	udpLn, err := net.ListenPacket("udp", addr)
-	if err != nil {
+	if !canListenTCP("tcp6", fmt.Sprintf("[::]:%d", port)) {
 		return false
 	}
-	_ = udpLn.Close()
+	if !canListenUDP("udp4", fmt.Sprintf("0.0.0.0:%d", port)) {
+		return false
+	}
+	if !canListenUDP("udp6", fmt.Sprintf("[::]:%d", port)) {
+		return false
+	}
+	return true
+}
+
+func canIgnoreFamilyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EPROTONOSUPPORT) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "address family not supported") || strings.Contains(msg, "protocol not supported") {
+		return true
+	}
+	return false
+}
+
+func canListenTCP(network string, addr string) bool {
+	ln, err := net.Listen(network, addr)
+	if err != nil {
+		return canIgnoreFamilyErr(err)
+	}
+	_ = ln.Close()
+	return true
+}
+
+func canListenUDP(network string, addr string) bool {
+	pc, err := net.ListenPacket(network, addr)
+	if err != nil {
+		return canIgnoreFamilyErr(err)
+	}
+	_ = pc.Close()
 	return true
 }
 

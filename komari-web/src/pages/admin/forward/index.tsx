@@ -8,8 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import RuleTable from './parts/RuleTable'
 import RuleFormDrawer, { type RuleFormState } from './parts/RuleFormDrawer'
 import RuleDetailDrawer from './parts/RuleDetailDrawer'
-import SettingsPanel from './parts/SettingsPanel'
-import TemplateEditor from './parts/TemplateEditor'
+import SettingsAndTemplate from './parts/SettingsAndTemplate'
 import TestConnectivityDialog from './parts/TestConnectivityDialog'
 import RuleLogsDialog from './parts/RuleLogsDialog'
 import Loading from '@/components/loading'
@@ -300,149 +299,299 @@ const ForwardPage = () => {
 					<Text size="6" weight="bold">
 						{t('forward.title')}
 					</Text>
-					<Flex gap="2">
-						<Button variant="ghost" onClick={fetchRules} disabled={loading}>
-							<ReloadIcon /> {t('forward.refresh')}
-						</Button>
-						<Button onClick={() => setFormOpen(true)}>
-							<PlusIcon /> {t('forward.create')}
-						</Button>
-					</Flex>
 				</Flex>
 
-				<Tabs.Root defaultValue="list">
-					<Tabs.List>
-						<Tabs.Trigger value="list">{t('forward.tabList')}</Tabs.Trigger>
-						<Tabs.Trigger value="settings">{t('forward.tabSettings')}</Tabs.Trigger>
-						<Tabs.Trigger value="template">{t('forward.tabTemplate')}</Tabs.Trigger>
-					</Tabs.List>
-					<Tabs.Content value="list" className="pt-3">
-						<Card className="p-3 mb-3">
-							<Flex gap="3" align="center" wrap="wrap">
-								<TextField.Root
-									value={search}
-									onChange={e => setSearch(e.target.value)}
-									placeholder={t('forward.searchPlaceholder', { defaultValue: '搜索名称或标签' })}
-								/>
-								<Select.Root value={statusFilter} onValueChange={setStatusFilter}>
-									<Select.Trigger placeholder={t('forward.filterStatus', { defaultValue: '状态' })} />
-									<Select.Content>
-										<Select.Item value="all">{t('forward.filterAll', { defaultValue: '全部状态' })}</Select.Item>
-										<Select.Item value="running">{t('forward.statusRunning', { defaultValue: '运行中' })}</Select.Item>
-										<Select.Item value="stopped">{t('forward.statusStopped', { defaultValue: '已停止' })}</Select.Item>
-										<Select.Item value="error">{t('forward.statusError', { defaultValue: '异常' })}</Select.Item>
-									</Select.Content>
-								</Select.Root>
-								<Select.Root value={typeFilter} onValueChange={setTypeFilter}>
-									<Select.Trigger placeholder={t('forward.filterType', { defaultValue: '类型' })} />
-									<Select.Content>
-										<Select.Item value="all">{t('forward.filterAllType', { defaultValue: '全部类型' })}</Select.Item>
-										<Select.Item value="direct">{t('forward.typeDirect', { defaultValue: '中转' })}</Select.Item>
-										<Select.Item value="relay_group">{t('forward.typeRelayGroup', { defaultValue: '中继组' })}</Select.Item>
-										<Select.Item value="chain">{t('forward.typeChain', { defaultValue: '链式' })}</Select.Item>
-									</Select.Content>
-								</Select.Root>
-							</Flex>
-						</Card>
+								<Tabs.Root defaultValue="list">
 
-						{selectedIds.length > 0 && (
-							<Card className="p-3 mb-3">
-								<Flex justify="between" align="center" wrap="wrap" gap="2">
-									<Text>{t('forward.selectedCount', { defaultValue: '已选择 {{count}} 项', count: selectedIds.length })}</Text>
-									<Flex gap="2" align="center">
-										<Button size="2" variant="soft" onClick={() => runBatch('enable')}>
-											{t('forward.batchEnable', { defaultValue: '批量启用' })}
-										</Button>
-										<Button size="2" variant="soft" onClick={() => runBatch('disable')}>
-											{t('forward.batchDisable', { defaultValue: '批量停用' })}
-										</Button>
-										<Button size="2" variant="soft" color="red" onClick={() => runBatch('delete')}>
-											{t('forward.batchDelete', { defaultValue: '批量删除' })}
-										</Button>
-										<Button size="2" variant="ghost" onClick={() => setSelectedIds([])}>
-											{t('forward.clearSelection', { defaultValue: '清空选择' })}
-										</Button>
-									</Flex>
-								</Flex>
-							</Card>
-						)}
+									<Tabs.List>
 
-						{loading ? (
-							<Loading />
-						) : groupedRules.length === 0 ? (
-							<Card className="p-6 text-center">
-								<Text size="3" weight="bold">
-									{t('forward.emptyTitle', { defaultValue: '暂无转发规则' })}
-								</Text>
-								<Text size="2" color="gray" className="mt-2">
-									{t('forward.emptyHint', { defaultValue: '创建第一个转发规则以开始使用。' })}
-								</Text>
-								<Button className="mt-4" onClick={() => setFormOpen(true)}>
-									{t('forward.createFirst', { defaultValue: '创建第一个转发规则' })}
-								</Button>
-							</Card>
-						) : (
-							<Flex direction="column" gap="4">
-								{groupedRules.map(group => {
-									const collapsed = collapsedGroups[group.group]
-									const groupIds = group.items.map(item => item.id)
-									return (
-										<Card key={group.group} className="p-3">
-											<Flex justify="between" align="center" mb="3">
-												<Button
-													variant="ghost"
-													onClick={() =>
-														setCollapsedGroups(prev => ({ ...prev, [group.group]: !collapsed }))
-													}>
-													<ChevronDownIcon className={collapsed ? '' : 'rotate-180 transition-transform'} />
-													{group.group} ({group.items.length})
-												</Button>
+										<Tabs.Trigger value="list">{t('forward.tabList')}</Tabs.Trigger>
+
+										<Tabs.Trigger value="settings">{t('forward.tabSystemConfig', { defaultValue: '系统配置' })}</Tabs.Trigger>
+
+									</Tabs.List>
+
+									<Tabs.Content value="list" className="pt-3">
+
+										<Card className="p-3 mb-3">
+
+											<Flex justify="between" align="center" wrap="wrap" gap="3">
+
+												<Flex gap="3" align="center" wrap="wrap">
+
+													<TextField.Root
+
+														value={search}
+
+														onChange={e => setSearch(e.target.value)}
+
+														placeholder={t('forward.searchPlaceholder', { defaultValue: '搜索名称或标签' })}
+
+													/>
+
+													<Select.Root value={statusFilter} onValueChange={setStatusFilter}>
+
+														<Select.Trigger placeholder={t('forward.filterStatus', { defaultValue: '状态' })} />
+
+														<Select.Content>
+
+															<Select.Item value="all">{t('forward.filterAll', { defaultValue: '全部状态' })}</Select.Item>
+
+															<Select.Item value="running">{t('forward.statusRunning', { defaultValue: '运行中' })}</Select.Item>
+
+															<Select.Item value="stopped">{t('forward.statusStopped', { defaultValue: '已停止' })}</Select.Item>
+
+															<Select.Item value="error">{t('forward.statusError', { defaultValue: '异常' })}</Select.Item>
+
+														</Select.Content>
+
+													</Select.Root>
+
+													<Select.Root value={typeFilter} onValueChange={setTypeFilter}>
+
+														<Select.Trigger placeholder={t('forward.filterType', { defaultValue: '类型' })} />
+
+														<Select.Content>
+
+															<Select.Item value="all">{t('forward.filterAllType', { defaultValue: '全部类型' })}</Select.Item>
+
+															<Select.Item value="direct">{t('forward.typeDirect', { defaultValue: '中转' })}</Select.Item>
+
+															<Select.Item value="relay_group">
+
+																{t('forward.typeRelayGroup', { defaultValue: '中继组' })}
+
+															</Select.Item>
+
+															<Select.Item value="chain">{t('forward.typeChain', { defaultValue: '链式' })}</Select.Item>
+
+														</Select.Content>
+
+													</Select.Root>
+
+												</Flex>
+
+												<Flex gap="2">
+
+													<Button variant="ghost" onClick={() => fetchRules()} disabled={loading}>
+
+														<ReloadIcon /> {t('forward.refresh')}
+
+													</Button>
+
+													<Button onClick={() => setFormOpen(true)}>
+
+														<PlusIcon /> {t('forward.create')}
+
+													</Button>
+
+												</Flex>
+
 											</Flex>
-											{!collapsed && (
-												<RuleTable
-													rules={group.items}
-													onView={setDetail}
-													onEdit={rule => {
-														setEditing({
-															id: rule.id,
-															name: rule.name,
-															group_name: rule.group_name,
-															tags: parseTags(rule.tags).join(', '),
-															notes: rule.notes || '',
-															type: rule.type,
-															is_enabled: rule.is_enabled,
-															config_json: rule.config_json
-														})
-														setFormOpen(true)
-													}}
-													onStart={id => updateState(id, 'start')}
-													onStop={id => updateState(id, 'stop')}
-													onToggleEnable={(id, enabled) => updateState(id, enabled ? 'enable' : 'disable')}
-													onMonitor={id => navigate(`/admin/forward/${id}/dashboard`)}
-													onTest={rule => setTestRule(rule)}
-													onLogs={rule => setLogRule(rule)}
-													onDelete={handleDelete}
-													onExport={handleExport}
-													draggable={allowDrag}
-													onReorder={handleReorder}
-													selectedIds={selectedIds}
-													onToggleSelect={toggleSelect}
-													onToggleSelectAll={checked => toggleSelectAll(groupIds, checked)}
-												/>
-											)}
+
 										</Card>
-									)
-								})}
-							</Flex>
-						)}
-					</Tabs.Content>
-					<Tabs.Content value="settings" className="pt-3">
-						<SettingsPanel />
-					</Tabs.Content>
-					<Tabs.Content value="template" className="pt-3">
-						<TemplateEditor />
-					</Tabs.Content>
-				</Tabs.Root>
+
+				
+
+										{selectedIds.length > 0 && (
+
+											<Card className="p-3 mb-3">
+
+												<Flex justify="between" align="center" wrap="wrap" gap="2">
+
+													<Text>
+
+														{t('forward.selectedCount', { defaultValue: '已选择 {{count}} 项', count: selectedIds.length })}
+
+													</Text>
+
+													<Flex gap="2" align="center">
+
+														<Button size="2" variant="soft" onClick={() => runBatch('enable')}>
+
+															{t('forward.batchEnable', { defaultValue: '批量启用' })}
+
+														</Button>
+
+														<Button size="2" variant="soft" onClick={() => runBatch('disable')}>
+
+															{t('forward.batchDisable', { defaultValue: '批量停用' })}
+
+														</Button>
+
+														<Button size="2" variant="soft" color="red" onClick={() => runBatch('delete')}>
+
+															{t('forward.batchDelete', { defaultValue: '批量删除' })}
+
+														</Button>
+
+														<Button size="2" variant="ghost" onClick={() => setSelectedIds([])}>
+
+															{t('forward.clearSelection', { defaultValue: '清空选择' })}
+
+														</Button>
+
+													</Flex>
+
+												</Flex>
+
+											</Card>
+
+										)}
+
+				
+
+										{loading ? (
+
+											<Loading />
+
+										) : groupedRules.length === 0 ? (
+
+											<Card className="p-6">
+
+												<Flex direction="column" align="center" gap="3">
+
+													<Text size="3" weight="bold">
+
+														{t('forward.emptyTitle', { defaultValue: '暂无转发规则' })}
+
+													</Text>
+
+													<Text size="2" color="gray">
+
+														{t('forward.emptyHint', { defaultValue: '创建第一个转发规则以开始使用。' })}
+
+													</Text>
+
+													<Button className="mt-2" onClick={() => setFormOpen(true)}>
+
+														<PlusIcon /> {t('forward.createFirst', { defaultValue: '创建第一个转发规则' })}
+
+													</Button>
+
+												</Flex>
+
+											</Card>
+
+										) : (
+
+											<Flex direction="column" gap="4">
+
+												{groupedRules.map(group => {
+
+													const collapsed = collapsedGroups[group.group]
+
+													const groupIds = group.items.map(item => item.id)
+
+													return (
+
+														<Card key={group.group} className="p-3">
+
+															<Flex justify="between" align="center" mb="3">
+
+																<Button
+
+																	variant="ghost"
+
+																	onClick={() =>
+
+																		setCollapsedGroups(prev => ({ ...prev, [group.group]: !collapsed }))
+
+																	}
+
+																>
+
+																	<ChevronDownIcon className={collapsed ? '' : 'rotate-180 transition-transform'} />
+
+																	{group.group} ({group.items.length})
+
+																</Button>
+
+															</Flex>
+
+															{!collapsed && (
+
+																<RuleTable
+
+																	rules={group.items}
+
+																	onView={setDetail}
+
+																	onEdit={rule => {
+
+																		setEditing({
+
+																			id: rule.id,
+
+																			name: rule.name,
+
+																			group_name: rule.group_name,
+
+																			tags: parseTags(rule.tags).join(', '),
+
+																			notes: rule.notes || '',
+
+																			type: rule.type,
+
+																			is_enabled: rule.is_enabled,
+
+																			config_json: rule.config_json
+
+																		})
+
+																		setFormOpen(true)
+
+																	}}
+
+																	onStart={id => updateState(id, 'start')}
+
+																	onStop={id => updateState(id, 'stop')}
+
+																	onToggleEnable={(id, enabled) => updateState(id, enabled ? 'enable' : 'disable')}
+
+																	onMonitor={id => navigate(`/admin/forward/${id}/dashboard`)}
+
+																	onTest={rule => setTestRule(rule)}
+
+																	onLogs={rule => setLogRule(rule)}
+
+																	onDelete={handleDelete}
+
+																	onExport={handleExport}
+
+																	draggable={allowDrag}
+
+																	onReorder={handleReorder}
+
+																	selectedIds={selectedIds}
+
+																	onToggleSelect={toggleSelect}
+
+																	onToggleSelectAll={checked => toggleSelectAll(groupIds, checked)}
+
+																/>
+
+															)}
+
+														</Card>
+
+													)
+
+												})}
+
+											</Flex>
+
+										)}
+
+									</Tabs.Content>
+
+									<Tabs.Content value="settings" className="pt-3">
+
+										<SettingsAndTemplate />
+
+									</Tabs.Content>
+
+								</Tabs.Root>
 
 				<RuleFormDrawer
 					open={formOpen}

@@ -53,11 +53,6 @@
 					"icon": "MessageCircleMore"
 				},
 				{
-					"labelKey": "settings.security.title",
-					"path": "/admin/settings/security",
-					"icon": "Shield"
-				},
-				{
 					"labelKey": "settings.general.title",
 					"path": "/admin/settings/general",
 					"icon": "Ellipsis"

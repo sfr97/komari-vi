@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Button, Card, Flex, Grid, Switch, Text, TextField, TextArea } from '@radix-ui/themes'
+import { Button, Card, Flex, Grid, Separator, Switch, Text, TextField, TextArea } from '@radix-ui/themes'
 import { toast } from 'sonner'
 
 type SecurityConfig = {
@@ -21,7 +21,7 @@ type SecurityConfig = {
 
 const numberOrZero = (v: number | string | undefined) => Number(v || 0)
 
-export default function SecuritySettings() {
+export function LgSecuritySettings({ embedded = false }: { embedded?: boolean }) {
 	const [config, setConfig] = useState<SecurityConfig | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
@@ -73,29 +73,24 @@ export default function SecuritySettings() {
 
 	if (!config || loading) {
 		return (
-			<Flex direction="column" gap="3" className="p-4">
+			<Flex direction="column" gap="3" className={embedded ? '' : 'p-4'}>
 				<Text>加载中...</Text>
 			</Flex>
 		)
 	}
 
 	return (
-		<Flex direction="column" gap="3" className="p-4">
-			<Flex justify="between" align="center">
-				<div>
-					<Text size="5" weight="bold">
-						安全配置
-					</Text>
-					<Text size="2" color="gray" className="block mt-1">
-						限制接口滥用、防爬虫、防重放
-					</Text>
-				</div>
-				<Button onClick={update} disabled={saving}>
-					{saving ? '保存中...' : '保存'}
-				</Button>
-			</Flex>
+		<Flex direction="column" gap="3" className={embedded ? '' : 'p-4'}>
+			<div className="flex gap-3 items-center">
+				<Text size={embedded ? '4' : '5'} weight="bold">
+					安全配置
+				</Text>
+				<Text size="2" color="gray">
+					仅作用于 Looking Glass 相关接口（签名/来源/限流/封禁）
+				</Text>
+			</div>
 
-			<Card>
+			<Card variant="surface">
 				<Flex direction="column" gap="4" p="4">
 					<Text size="4" weight="bold">
 						签名与来源校验
@@ -157,11 +152,9 @@ export default function SecuritySettings() {
 							/>
 						</Field>
 					</Grid>
-				</Flex>
-			</Card>
 
-			<Card>
-				<Flex direction="column" gap="4" p="4">
+					<Separator size="4" />
+
 					<Text size="4" weight="bold">
 						频率限制
 					</Text>
@@ -188,11 +181,9 @@ export default function SecuritySettings() {
 							/>
 						</Field>
 					</Grid>
-				</Flex>
-			</Card>
 
-			<Card>
-				<Flex direction="column" gap="4" p="4">
+					<Separator size="4" />
+
 					<Text size="4" weight="bold">
 						失败封禁
 					</Text>
@@ -222,6 +213,12 @@ export default function SecuritySettings() {
 					<Text size="1" color="gray">
 						授权码错误、签名错误、来源非法时累加失败次数，达到阈值后封禁 IP。
 					</Text>
+
+					<Flex justify="end" align="center" className="pt-1">
+						<Button onClick={update} disabled={saving}>
+							{saving ? '保存中...' : '保存'}
+						</Button>
+					</Flex>
 				</Flex>
 			</Card>
 		</Flex>
@@ -237,4 +234,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 			{children}
 		</Flex>
 	)
+}
+
+export default function SecuritySettingsPage() {
+	return <LgSecuritySettings />
 }

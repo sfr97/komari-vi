@@ -264,6 +264,7 @@ func GetPublicLgNodes(c *gin.Context) {
 		return
 	}
 	if !checkOriginAllowed(cfg, c) {
+		markFailure(c.ClientIP(), cfg)
 		RespondError(c, http.StatusForbidden, "来源不被允许")
 		return
 	}

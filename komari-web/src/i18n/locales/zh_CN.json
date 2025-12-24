@@ -952,7 +952,13 @@
     "mode": "显示模式"
   },
   "lg": {
-    "title": "Looking Glass"
+    "title": "Looking Glass",
+    "manage": {
+      "title": "管理"
+    },
+    "security": {
+      "title": "安全配置"
+    }
   },
   "agent_version": {
     "title": "版本管理",

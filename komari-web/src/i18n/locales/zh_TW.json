@@ -753,6 +753,15 @@
   "view": {
     "mode": "顯示模式"
   },
+  "lg": {
+    "title": "Looking Glass",
+    "manage": {
+      "title": "管理"
+    },
+    "security": {
+      "title": "安全配置"
+    }
+  },
   "agent_version": {
     "title": "版本管理",
     "form_hint": "當版本被標記為當前版本時，Agent 會在版本號不匹配時下載更新並重啟。",

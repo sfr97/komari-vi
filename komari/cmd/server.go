@@ -1,4 +1,4 @@
-package cmd
+﻿package cmd
 
 import (
 	"context"
@@ -311,6 +311,9 @@ func RunServer() {
 			agentVersionGroup.POST("/:id/metadata", admin.UpdateAgentVersionMetadata)
 			agentVersionGroup.DELETE("/:id/package/:package_id", admin.DeleteAgentPackage)
 			agentVersionGroup.GET("/:id/package/:package_id/download", admin.DownloadAgentPackage)
+			agentVersionGroup.POST("/repo-sync/preview", admin.PreviewRepoSync)
+			agentVersionGroup.POST("/repo-sync/start", admin.StartRepoSync)
+			agentVersionGroup.GET("/repo-sync/:id/stream", admin.StreamRepoSync)
 		}
 		installScriptGroup := adminAuthrized.Group("/install-script")
 		{
@@ -565,6 +568,12 @@ func InitDatabase() {
 			panic(err)
 		}
 		log.Println("Default admin account created. Username:", user, ", Password:", passwd)
+		content := fmt.Sprintf("Komari 初次启动生成的管理员凭据\n用户名: %s\n密码: %s\n生成时间: %s\n注意: 请尽快自行修改管理员密码。\n", user, passwd, time.Now().Format(time.RFC3339))
+		if err := os.WriteFile("./data/initial_admin.txt", []byte(content), 0600); err != nil {
+			log.Printf("Failed to write initial admin credentials file: %v", err)
+		} else {
+			log.Printf("Initial admin credentials saved to ./data/initial_admin.txt")
+		}
 	}
 }
 

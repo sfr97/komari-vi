@@ -953,7 +953,13 @@
     "mode": "View Mode"
   },
   "lg": {
-    "title": "Looking Glass"
+    "title": "Looking Glass",
+    "manage": {
+      "title": "Manage"
+    },
+    "security": {
+      "title": "Security"
+    }
   },
   "agent_version": {
     "title": "Version Management",

@@ -1,6 +1,7 @@
 // routes.js
 import { lazy } from 'react'
 import type { RouteObject } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import React from 'react'
 
 const Index = lazy(() => import('./pages/Index'))
@@ -64,7 +65,7 @@ export const routes: RouteObject[] = [
 					},
 					{
 						path: 'security',
-						element: React.createElement(lazy(() => import('./pages/admin/settings/security')))
+						element: React.createElement(Navigate, { to: '/admin/lg?tab=security', replace: true })
 					},
 					{
 						path: 'general',
@@ -120,6 +121,10 @@ export const routes: RouteObject[] = [
 			{
 				path: 'lg',
 				element: React.createElement(AdminLg)
+			},
+			{
+				path: 'lg/security',
+				element: React.createElement(Navigate, { to: '/admin/lg?tab=security', replace: true })
 			},
 			{
 				path: 'exec',

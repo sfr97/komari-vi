@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Pencil, Trash, Upload, Plus, Download, Check } from 'lucide-react'
+import { AgentRepoSyncDialog } from '@/components/admin/AgentRepoSyncDialog'
 
 type AgentPackage = {
 	id: number
@@ -46,6 +47,7 @@ export function AgentVersionManager() {
 	const [versions, setVersions] = useState<AgentVersion[]>([])
 	const [loading, setLoading] = useState<boolean>(true)
 	const [createOpen, setCreateOpen] = useState(false)
+	const [repoSyncOpen, setRepoSyncOpen] = useState(false)
 
 	const fetchVersions = async () => {
 		setLoading(true)
@@ -82,6 +84,25 @@ export function AgentVersionManager() {
 					<Button variant="soft" onClick={fetchVersions}>
 						{t('agent_version.refresh')}
 					</Button>
+					<Dialog.Root open={repoSyncOpen} onOpenChange={open => setRepoSyncOpen(open)}>
+						<Dialog.Trigger>
+							<Button variant="soft">
+								{t('agent_version.repo_sync', '同步仓库')}
+							</Button>
+						</Dialog.Trigger>
+						<Dialog.Content
+							style={{ maxWidth: 760 }}
+							onPointerDownOutside={e => e.preventDefault()}
+							onEscapeKeyDown={e => e.preventDefault()}>
+							<AgentRepoSyncDialog
+								onSuccess={() => {
+									fetchVersions()
+									setRepoSyncOpen(false)
+								}}
+								onClose={() => setRepoSyncOpen(false)}
+							/>
+						</Dialog.Content>
+					</Dialog.Root>
 					<Dialog.Root open={createOpen} onOpenChange={setCreateOpen}>
 						<Dialog.Trigger>
 							<Button>

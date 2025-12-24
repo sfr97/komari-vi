@@ -7,6 +7,8 @@ import { toast } from 'sonner'
 import Flag from '@/components/Flag'
 import { Selector } from '@/components/Selector'
 import { compareServersByWeightName } from '@/utils/serverSort'
+import { useSearchParams } from 'react-router-dom'
+import { LgSecuritySettings } from './lg_security'
 
 type LgAuthorization = {
 	id?: number
@@ -92,6 +94,12 @@ const LgPage = () => (
 
 const LgContent = () => {
 	const { nodeDetail, isLoading } = useNodeDetails()
+	const [searchParams, setSearchParams] = useSearchParams()
+	const [activeTab, setActiveTab] = useState<'authorizations' | 'tools' | 'security' | 'install'>(() => {
+		const tab = searchParams.get('tab')
+		if (tab === 'tools' || tab === 'security' || tab === 'install' || tab === 'authorizations') return tab
+		return 'authorizations'
+	})
 	const [authList, setAuthList] = useState<LgAuthorization[]>([])
 	const [toolSettings, setToolSettings] = useState<LgToolSetting[]>([])
 	const [loading, setLoading] = useState(false)
@@ -101,6 +109,16 @@ const LgContent = () => {
 
 	const linuxNodes = useMemo(() => nodeDetail.filter(n => n.os && n.os.toLowerCase().includes('linux')), [nodeDetail])
 	const linuxNodeIdSet = useMemo(() => new Set(linuxNodes.map(n => n.uuid)), [linuxNodes])
+
+	useEffect(() => {
+		const tab = searchParams.get('tab')
+		if (tab === 'tools' || tab === 'security' || tab === 'install' || tab === 'authorizations') {
+			if (tab !== activeTab) setActiveTab(tab)
+		} else if (tab == null && activeTab !== 'authorizations') {
+			setActiveTab('authorizations')
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [searchParams])
 
 	const normalizeSelectedNodes = (nodes: string[]) => {
 		const unique = Array.from(new Set((nodes || []).filter(Boolean)))
@@ -263,7 +281,16 @@ const LgContent = () => {
 			<Separator size="4" />
 
 			{/* Tabs 区域 */}
-			<Tabs.Root defaultValue="authorizations">
+			<Tabs.Root
+				value={activeTab}
+				onValueChange={v => {
+					const next = (v || 'authorizations') as any
+					setActiveTab(next)
+					const nextParams = new URLSearchParams(searchParams)
+					if (next === 'authorizations') nextParams.delete('tab')
+					else nextParams.set('tab', next)
+					setSearchParams(nextParams, { replace: true })
+				}}>
 				<Tabs.List>
 					<Tabs.Trigger value="authorizations">
 						<Shield size={14} />
@@ -272,6 +299,10 @@ const LgContent = () => {
 					<Tabs.Trigger value="tools">
 						<Settings size={14} />
 						工具配置
+					</Tabs.Trigger>
+					<Tabs.Trigger value="security">
+						<Shield size={14} />
+						安全配置
 					</Tabs.Trigger>
 					<Tabs.Trigger value="install">
 						<Terminal size={14} />
@@ -456,6 +487,11 @@ const LgContent = () => {
 								</Button>
 							</Flex>
 						</Flex>
+					</Tabs.Content>
+
+					{/* 安全配置 Tab */}
+					<Tabs.Content value="security">
+						<LgSecuritySettings embedded />
 					</Tabs.Content>
 
 					{/* 安装指引 Tab */}

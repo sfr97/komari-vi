@@ -753,6 +753,15 @@
   "view": {
     "mode": "Mode Tampilan"
   },
+  "lg": {
+    "title": "Looking Glass",
+    "manage": {
+      "title": "Kelola"
+    },
+    "security": {
+      "title": "Keamanan"
+    }
+  },
   "agent_version": {
     "title": "Version Management",
     "form_hint": "When a version is marked as current, agents will update and restart if their version differs.",

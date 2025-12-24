@@ -5,6 +5,12 @@
 ### Frontend Repository
 - **Frontend project repository**: https://github.com/komari-monitor/komari-web
 
+### Runtime WebUI Override (Optional)
+Komari supports a runtime WebUI override:
+
+- In Admin panel → Settings → Theme Management, use **Update Backend Pages (WebUI)** to upload a zip of `komari-web` build output.
+- The backend will extract it into `./data/webui` and prefer these files when serving pages (including `/admin` and `/terminal`).
+
 ### Build Requirements
 1. Clone the frontend repository and build the static files
 2. Copy the generated static files to the `dist` folder in the Komari backend project root directory
@@ -19,6 +25,12 @@
 
 ### 前端项目仓库
 - **前端项目地址**: https://github.com/komari-monitor/komari-web
+
+### 运行时 WebUI 覆盖（可选）
+Komari 支持在运行时覆盖内置 WebUI：
+
+- 进入后台 → 设置 → 主题管理，使用 **更新后端页面（WebUI）** 上传 `komari-web` 构建产物 zip。
+- 后端会解压到 `./data/webui`，并在提供页面资源时优先使用该目录（包含 `/admin`、`/terminal` 等）。
 
 ### 构建要求
 1. 克隆前端仓库并构建静态文件

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/config"
@@ -25,6 +26,13 @@ var DistFS fs.FS
 var RawIndexFile string
 
 var IndexFile string
+
+const localWebUIDir = "./data/webui"
+
+var localMu sync.RWMutex
+var localDistFS fs.FS
+var localRawIndexFile string
+var localIndexFile string
 
 func initIndex() {
 	err := os.MkdirAll("./data/theme", 0755)
@@ -54,8 +62,48 @@ func initIndex() {
 	}
 	RawIndexFile = string(index)
 }
+
+func loadLocalWebUI() {
+	localMu.Lock()
+	defer localMu.Unlock()
+
+	localDistFS = nil
+	localRawIndexFile = ""
+	localIndexFile = ""
+
+	// data/webui 是一个可选覆盖层：存在且包含 index.html 才启用
+	indexPath := filepath.Join(localWebUIDir, "index.html")
+	if _, err := os.Stat(indexPath); err != nil {
+		return
+	}
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		log.Println("Failed to read local webui index.html:", err)
+		return
+	}
+
+	localDistFS = os.DirFS(localWebUIDir)
+	localRawIndexFile = string(data)
+}
+
+// ReloadLocalWebUI 重新加载 data/webui，并基于当前配置生成定制后的 index.html。
+// 该函数用于在运行时上传/替换 WebUI 后，让新资源立即生效。
+func ReloadLocalWebUI(cfg models.Config) {
+	loadLocalWebUI()
+	localMu.Lock()
+	defer localMu.Unlock()
+	if localRawIndexFile != "" {
+		localIndexFile = applyCustomizations(localRawIndexFile, cfg)
+	}
+}
+
 func UpdateIndex(cfg models.Config) {
 	IndexFile = applyCustomizations(RawIndexFile, cfg)
+	localMu.Lock()
+	if localRawIndexFile != "" {
+		localIndexFile = applyCustomizations(localRawIndexFile, cfg)
+	}
+	localMu.Unlock()
 }
 
 // applyCustomizations 应用自定义内容到HTML字符串
@@ -83,6 +131,7 @@ func applyCustomizations(htmlContent string, cfg models.Config) string {
 
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	initIndex()
+	loadLocalWebUI()
 
 	// Serve favicon.ico: use local file if exists, fallback to embedded
 	r.GET("/favicon.ico", func(c *gin.Context) {
@@ -90,18 +139,16 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			c.File("data/favicon.ico")
 			return
 		}
-		f, err := DistFS.Open("favicon.ico")
-		if err != nil {
-			c.Status(http.StatusNotFound)
+		// Prefer local webui (data/webui), fallback to embedded dist
+		if data, ok := readFromLocalFS("favicon.ico"); ok {
+			c.Data(http.StatusOK, "image/x-icon", data)
 			return
 		}
-		defer f.Close()
-		data, err := io.ReadAll(f)
-		if err != nil {
-			c.Status(http.StatusInternalServerError)
+		if data, ok := readFromEmbeddedFS("favicon.ico"); ok {
+			c.Data(http.StatusOK, "image/x-icon", data)
 			return
 		}
-		c.Data(http.StatusOK, "image/x-icon", data)
+		c.Status(http.StatusNotFound)
 	})
 	// r.GET("/manifest.json", func(c *gin.Context) {
 	// 	cfg, err := config.Get()
@@ -181,22 +228,25 @@ func serveFromEmbedded(c *gin.Context, path string) {
 	// 		}
 	// 	}
 	// }
-	// 如果文件存在，直接返回文件内容
+	// 如果文件存在，直接返回文件内容（优先 local webui，其次 embedded）
 	cleanPath := strings.TrimPrefix(path, "/")
-	file, err := DistFS.Open(cleanPath)
-	if err == nil {
-		defer file.Close()
-		data, err := io.ReadAll(file)
-		if err == nil {
-			contentType := getContentType(path)
-			c.Header("Content-Type", contentType)
-			// 静态资源设置缓存
-			if strings.Contains(path, "/assets/") || strings.Contains(path, "/static/") {
-				c.Header("Cache-Control", "public, max-age=15552000")
-			}
-			c.Data(http.StatusOK, contentType, data)
-			return
+	if data, ok := readFromLocalFS(cleanPath); ok {
+		contentType := getContentType(path)
+		c.Header("Content-Type", contentType)
+		if strings.Contains(path, "/assets/") || strings.Contains(path, "/static/") {
+			c.Header("Cache-Control", "public, max-age=15552000")
 		}
+		c.Data(http.StatusOK, contentType, data)
+		return
+	}
+	if data, ok := readFromEmbeddedFS(cleanPath); ok {
+		contentType := getContentType(path)
+		c.Header("Content-Type", contentType)
+		if strings.Contains(path, "/assets/") || strings.Contains(path, "/static/") {
+			c.Header("Cache-Control", "public, max-age=15552000")
+		}
+		c.Data(http.StatusOK, contentType, data)
+		return
 	}
 
 	// 处理HTML页面
@@ -208,10 +258,24 @@ func serveFromEmbedded(c *gin.Context, path string) {
 	c.Header("Content-Type", "text/html")
 	c.Status(200)
 
+	localMu.RLock()
+	hasLocal := localRawIndexFile != ""
+	rawLocal := localRawIndexFile
+	indexLocal := localIndexFile
+	localMu.RUnlock()
+
 	if strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/terminal") {
-		c.Writer.WriteString(RawIndexFile)
+		if hasLocal {
+			c.Writer.WriteString(rawLocal)
+		} else {
+			c.Writer.WriteString(RawIndexFile)
+		}
 	} else {
-		c.Writer.WriteString(IndexFile)
+		if hasLocal && indexLocal != "" {
+			c.Writer.WriteString(indexLocal)
+		} else {
+			c.Writer.WriteString(IndexFile)
+		}
 	}
 
 	c.Writer.Flush()
@@ -286,10 +350,15 @@ func serveThemeIndexWithCustomizations(c *gin.Context, indexPath string) {
 
 // getContentType 根据文件扩展名返回Content-Type
 func getContentType(path string) string {
+	if strings.HasSuffix(path, ".html") {
+		return "text/html"
+	}
 	if strings.HasSuffix(path, ".css") {
 		return "text/css"
 	} else if strings.HasSuffix(path, ".js") {
 		return "application/javascript"
+	} else if strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".map") || strings.HasSuffix(path, ".webmanifest") {
+		return "application/json"
 	} else if strings.HasSuffix(path, ".png") {
 		return "image/png"
 	} else if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") {
@@ -300,10 +369,44 @@ func getContentType(path string) string {
 		return "image/svg+xml"
 	} else if strings.HasSuffix(path, ".ico") {
 		return "image/x-icon"
+	} else if strings.HasSuffix(path, ".webp") {
+		return "image/webp"
 	} else if strings.HasSuffix(path, ".woff") {
 		return "font/woff"
 	} else if strings.HasSuffix(path, ".woff2") {
 		return "font/woff2"
 	}
 	return "application/octet-stream"
+}
+
+func readFromLocalFS(name string) ([]byte, bool) {
+	localMu.RLock()
+	fsys := localDistFS
+	localMu.RUnlock()
+	if fsys == nil {
+		return nil, false
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func readFromEmbeddedFS(name string) ([]byte, bool) {
+	f, err := DistFS.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }

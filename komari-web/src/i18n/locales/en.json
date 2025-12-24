@@ -930,6 +930,13 @@
     "uploading": "Uploading theme...",
     "uploda_413_content_too_large": "File upload failed (413). Please check and increase the file size limit in your reverse proxy server (such as Nginx/CDN) configuration (client_max_body_size) to ensure that this value is greater than your target file size.",
     "version": "Version",
+    "webui_upload": "Update Backend Pages",
+    "webui_upload_title": "Update Backend Pages (WebUI)",
+    "webui_upload_description": "Upload a zip of komari-web build output to override the built-in pages (including /admin and /terminal). Refresh the page after success.",
+    "webui_zip_files_only": "Only .zip files are supported (komari-web build output)",
+    "webui_uploading": "Uploading backend pages...",
+    "webui_upload_success": "Backend pages updated successfully. Please refresh to apply.",
+    "webui_upload_failed": "Backend pages update failed",
     "zip_files_only": "Only .zip files are supported"
   },
   "currency": {

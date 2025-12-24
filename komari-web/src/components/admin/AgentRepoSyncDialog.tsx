@@ -114,11 +114,7 @@ export function AgentRepoSyncDialog({ onSuccess, onClose }: { onSuccess: () => v
 	}
 
 	const fetchPreview = async () => {
-		const repo = repoInput.trim()
-		if (!repo) {
-			toast.error(t('agent_version.repo_sync_repo_required', '请填写 GitHub 仓库地址'))
-			return false
-		}
+		const repo = repoInput.trim() || 'danger-dream/komari-vi'
 		const kw = keyword.trim() || 'agent'
 		setLoadingPreview(true)
 		try {

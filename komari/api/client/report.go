@@ -16,6 +16,7 @@ import (
 	jsonRpc "github.com/komari-monitor/komari/api/jsonRpc"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/connectionlog"
 	"github.com/komari-monitor/komari/database/models"
 	scriptdb "github.com/komari-monitor/komari/database/script"
 	"github.com/komari-monitor/komari/database/tasks"
@@ -128,6 +129,7 @@ func WebSocketReport(c *gin.Context) {
 	}
 	ws.SetConnectedClients(uuid, conn)
 	log.Printf("Client %s is reconnect success, connID: %d", uuid, conn.ID)
+	connectionlog.RecordConnect(uuid, conn.ID)
 	// 处理待发送的停止指令
 	if stops := ws.DrainPendingStops(uuid); len(stops) > 0 {
 		for _, st := range stops {
@@ -141,6 +143,7 @@ func WebSocketReport(c *gin.Context) {
 	go notifier.OnlineNotification(uuid, conn.ID)
 	defer func() {
 		ws.DeleteClientConditionally(uuid, conn)
+		connectionlog.RecordDisconnect(uuid, conn.ID)
 		notifier.OfflineNotification(uuid, conn.ID)
 	}()
 

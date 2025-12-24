@@ -3,15 +3,38 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { NodeDetailsProvider, useNodeDetails } from '@/contexts/NodeDetailsContext'
 import { OfflineNotificationProvider, useOfflineNotification, type OfflineNotification } from '@/contexts/NotificationContext'
 import React from 'react'
-import { Pencil, Search } from 'lucide-react'
+import { BarChart3, Pencil, ScrollText, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Dialog, Flex, IconButton, Switch, TextField } from '@radix-ui/themes'
+import { Badge, Button, Dialog, Flex, IconButton, Switch, TextField, Tooltip } from '@radix-ui/themes'
 import { toast } from 'sonner'
 import Loading from '@/components/loading'
 import Tips from '@/components/ui/tips'
 import Flag from '@/components/Flag'
 import ServerViewModeControl, { type ServerViewMode } from '@/components/server/ServerViewModeControl'
 import ServerGroupedTableBody from '@/components/server/ServerGroupedTableBody'
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
+
+type AgentConnectionLog = {
+	id: number
+	client: string
+	connection_id: number
+	connected_at: string
+	disconnected_at?: string | null
+	online_seconds?: number | null
+}
+
+function formatDurationSeconds(totalSeconds: number, t: any) {
+	const s = Math.max(0, Math.floor(totalSeconds))
+	const days = Math.floor(s / 86400)
+	const hours = Math.floor((s % 86400) / 3600)
+	const minutes = Math.floor((s % 3600) / 60)
+	const seconds = s % 60
+	if (days > 0) return `${days}${t('nodeCard.time_day')}${hours}${t('nodeCard.time_hour')}${minutes}${t('nodeCard.time_minute')}${seconds}${t('nodeCard.time_second')}`
+	if (hours > 0) return `${hours}${t('nodeCard.time_hour')}${minutes}${t('nodeCard.time_minute')}${seconds}${t('nodeCard.time_second')}`
+	if (minutes > 0) return `${minutes}${t('nodeCard.time_minute')}${seconds}${t('nodeCard.time_second')}`
+	return `${seconds}${t('nodeCard.time_second')}`
+}
 
 const OfflinePage = () => {
 	return (
@@ -270,7 +293,7 @@ const OfflineNotificationTable = ({
 									})()}
 								</TableCell>
 								<TableCell>
-									<ActionButtons offlineNotifications={offlineNotification.find(n => n.client === node.uuid)} />
+									<ActionButtons clientUUID={node.uuid} offlineNotifications={offlineNotification.find(n => n.client === node.uuid)} />
 								</TableCell>
 							</TableRow>
 						)}
@@ -281,11 +304,117 @@ const OfflineNotificationTable = ({
 	)
 }
 
-const ActionButtons = ({ offlineNotifications }: { offlineNotifications: OfflineNotification | undefined }) => {
+const ConnectionStatsPanel = ({ logs, loading, now }: { logs: AgentConnectionLog[]; loading: boolean; now: number }) => {
+	const { t } = useTranslation()
+	if (loading) {
+		return <div className="p-3 text-sm text-muted-foreground">{t('common.loading', { defaultValue: '加载中...' })}</div>
+	}
+	if (!logs.length) {
+		return <div className="p-3 text-sm text-muted-foreground">{t('common.no_data', { defaultValue: '暂无数据' })}</div>
+	}
+
+	const asc = [...logs].sort((a, b) => new Date(a.connected_at).getTime() - new Date(b.connected_at).getTime())
+	let prevDisconnected: number | null = null
+	const series = asc.map((l, idx) => {
+		const connectedAt = new Date(l.connected_at).getTime()
+		const disconnectedAt = l.disconnected_at ? new Date(l.disconnected_at).getTime() : now
+		const onlineSec = l.online_seconds ?? Math.max(0, Math.floor((disconnectedAt - connectedAt) / 1000))
+		const offlineGapSec = prevDisconnected ? Math.max(0, Math.floor((connectedAt - prevDisconnected) / 1000)) : 0
+		prevDisconnected = l.disconnected_at ? disconnectedAt : now
+		return {
+			idx: idx + 1,
+			online: onlineSec,
+			offline: offlineGapSec
+		}
+	})
+
+	return (
+		<div className="w-[560px] max-w-[80vw] p-3">
+			<div className="mb-2 text-xs text-muted-foreground">
+				{t('notification.offline.stats_hint', { defaultValue: '展示最近会话的在线/离线间隔（最多 3000 条）' })}
+			</div>
+			<ChartContainer
+				className="h-[220px]"
+				config={{
+					online: { label: t('notification.offline.stats_online', { defaultValue: '在线时长(秒)' }), color: 'var(--chart-2)' },
+					offline: { label: t('notification.offline.stats_offline', { defaultValue: '离线空窗(秒)' }), color: 'var(--chart-1)' }
+				}}>
+				<BarChart data={series}>
+					<CartesianGrid strokeDasharray="3 3" />
+					<XAxis dataKey="idx" tick={false} />
+					<YAxis />
+					<ChartTooltip content={<ChartTooltipContent />} />
+					<Bar dataKey="offline" stackId="a" fill="var(--color-offline)" />
+					<Bar dataKey="online" stackId="a" fill="var(--color-online)" />
+				</BarChart>
+			</ChartContainer>
+		</div>
+	)
+}
+
+const ActionButtons = ({ clientUUID, offlineNotifications }: { clientUUID: string; offlineNotifications: OfflineNotification | undefined }) => {
 	const { t } = useTranslation()
 	const { refresh } = useOfflineNotification()
 	const [editOpen, setEditOpen] = React.useState(false)
 	const [editSaving, setEditSaving] = React.useState(false)
+	const [logsOpen, setLogsOpen] = React.useState(false)
+	const [logsLoading, setLogsLoading] = React.useState(false)
+	const [logs, setLogs] = React.useState<AgentConnectionLog[]>([])
+	const [logsTotal, setLogsTotal] = React.useState(0)
+	const [logsPage, setLogsPage] = React.useState(1)
+	const pageSize = 50
+	const [now, setNow] = React.useState(Date.now())
+
+	const [statsLoading, setStatsLoading] = React.useState(false)
+	const [statsLogs, setStatsLogs] = React.useState<AgentConnectionLog[]>([])
+
+	React.useEffect(() => {
+		if (!logsOpen) return
+		const id = window.setInterval(() => setNow(Date.now()), 1000)
+		return () => window.clearInterval(id)
+	}, [logsOpen])
+
+	const fetchLogs = React.useCallback(
+		async (page: number) => {
+			setLogsLoading(true)
+			try {
+				const res = await fetch(`/api/admin/notification/offline/logs?client=${encodeURIComponent(clientUUID)}&page=${page}&page_size=${pageSize}`)
+				const json = await res.json()
+				if (!res.ok || json.status !== 'success') throw new Error(json.message || res.statusText)
+				setLogs(json.data?.logs || [])
+				setLogsTotal(json.data?.total || 0)
+				setLogsPage(json.data?.page || page)
+			} catch (e: any) {
+				toast.error(t('common.error', { message: e?.message || String(e) }))
+			} finally {
+				setLogsLoading(false)
+			}
+		},
+		[clientUUID, pageSize, t]
+	)
+
+	const prefetchStats = React.useCallback(async () => {
+		if (statsLoading || statsLogs.length > 0) return
+		setStatsLoading(true)
+		try {
+			const res = await fetch(`/api/admin/notification/offline/logs/chart?client=${encodeURIComponent(clientUUID)}&limit=3000`)
+			const json = await res.json()
+			if (!res.ok || json.status !== 'success') throw new Error(json.message || res.statusText)
+			setStatsLogs(json.data?.logs || [])
+		} catch (e: any) {
+			toast.error(t('common.error', { message: e?.message || String(e) }))
+		} finally {
+			setStatsLoading(false)
+		}
+	}, [clientUUID, statsLoading, statsLogs.length, t])
+
+	React.useEffect(() => {
+		if (!logsOpen) return
+		setLogsPage(1)
+		void fetchLogs(1)
+	}, [logsOpen, fetchLogs])
+
+	const pageCount = Math.max(1, Math.ceil(logsTotal / pageSize))
 
 	return (
 		<Flex gap="2" align="center">
@@ -311,7 +440,7 @@ const ActionButtons = ({ offlineNotifications }: { offlineNotifications: Offline
 								headers: { 'Content-Type': 'application/json' },
 								body: JSON.stringify([
 									{
-										client: offlineNotifications?.client,
+										client: clientUUID,
 										...values
 									}
 								])
@@ -337,6 +466,82 @@ const ActionButtons = ({ offlineNotifications }: { offlineNotifications: Offline
 					/>
 				</Dialog.Content>
 			</Dialog.Root>
+			<Dialog.Root open={logsOpen} onOpenChange={setLogsOpen}>
+				<Tooltip content={t('notification.offline.view_logs', { defaultValue: '查看连接日志' })}>
+					<Dialog.Trigger>
+						<IconButton variant="ghost">
+							<ScrollText size={16} />
+						</IconButton>
+					</Dialog.Trigger>
+				</Tooltip>
+				<Dialog.Content style={{ maxWidth: 720 }}>
+					<Dialog.Title>{t('notification.offline.connection_logs', { defaultValue: '连接日志' })}</Dialog.Title>
+					<div className="text-xs text-muted-foreground">
+						{t('notification.offline.connection_logs_hint', { defaultValue: '按时间倒序展示。仍在线的会话将实时显示在线时长。' })}
+					</div>
+					<div className="mt-3 max-h-[60vh] overflow-y-auto pr-2">
+						{logsLoading ? (
+							<div className="py-6 text-center text-sm text-muted-foreground">{t('common.loading', { defaultValue: '加载中...' })}</div>
+						) : logs.length === 0 ? (
+							<div className="py-6 text-center text-sm text-muted-foreground">{t('common.no_data', { defaultValue: '暂无数据' })}</div>
+						) : (
+							<div className="relative pl-4">
+								<div className="absolute left-1 top-0 h-full w-px bg-(--gray-6)" />
+								{logs.map(l => {
+									const connectedAt = new Date(l.connected_at).getTime()
+									const disconnectedAt = l.disconnected_at ? new Date(l.disconnected_at).getTime() : null
+									const onlineSec = disconnectedAt
+										? l.online_seconds ?? Math.max(0, Math.floor((disconnectedAt - connectedAt) / 1000))
+										: Math.max(0, Math.floor((now - connectedAt) / 1000))
+									return (
+										<div key={l.id} className="relative mb-4">
+											<div className={`absolute -left-[11px] top-1 h-2.5 w-2.5 rounded-full ${disconnectedAt ? 'bg-(--gray-9)' : 'bg-(--green-9)'}`} />
+											<div className="text-sm">
+												<span className="font-medium">{new Date(l.connected_at).toLocaleString()}</span>
+												<span className="mx-2 text-muted-foreground">→</span>
+												{disconnectedAt ? (
+													<span className="font-medium">{new Date(l.disconnected_at as string).toLocaleString()}</span>
+												) : (
+													<span className="font-medium text-(--green-11)">{t('common.online', { defaultValue: '在线中' })}</span>
+												)}
+											</div>
+											<div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+												<span>
+													{t('notification.offline.online_duration', { defaultValue: '在线时长' })}: {formatDurationSeconds(onlineSec, t)}
+												</span>
+												<span>
+													{t('notification.offline.connection_id', { defaultValue: '连接ID' })}: {l.connection_id}
+												</span>
+											</div>
+										</div>
+									)
+								})}
+							</div>
+						)}
+					</div>
+					<Flex justify="between" align="center" className="mt-4">
+						<div className="text-xs text-muted-foreground">
+							{t('common.total', { defaultValue: '总计' })}: {logsTotal}
+						</div>
+						<Flex gap="2" align="center">
+							<Button variant="soft" disabled={logsLoading || logsPage <= 1} onClick={() => void fetchLogs(logsPage - 1)}>
+								{t('common.prev', { defaultValue: '上一页' })}
+							</Button>
+							<div className="text-xs text-muted-foreground">
+								{logsPage} / {pageCount}
+							</div>
+							<Button variant="soft" disabled={logsLoading || logsPage >= pageCount} onClick={() => void fetchLogs(logsPage + 1)}>
+								{t('common.next', { defaultValue: '下一页' })}
+							</Button>
+						</Flex>
+					</Flex>
+				</Dialog.Content>
+			</Dialog.Root>
+			<Tooltip content={<ConnectionStatsPanel logs={statsLogs} loading={statsLoading} now={Date.now()} />}>
+				<IconButton variant="ghost" onMouseEnter={() => void prefetchStats()}>
+					<BarChart3 size={16} />
+				</IconButton>
+			</Tooltip>
 		</Flex>
 	)
 }

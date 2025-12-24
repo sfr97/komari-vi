@@ -929,6 +929,13 @@
     "uploading": "正在上传主题...",
     "uploda_413_content_too_large": "文件上传失败 (413)。请检查并增大您的反向代理服务器（如 Nginx/CDN）配置中的文件大小限制（client_max_body_size），确保该值大于您的目标文件大小。",
     "version": "版本",
+    "webui_upload": "更新后端页面",
+    "webui_upload_title": "更新后端页面（WebUI）",
+    "webui_upload_description": "上传 komari-web 构建产物 zip，用于覆盖后端内置页面（包含 /admin、/terminal 等）。成功后建议刷新页面。",
+    "webui_zip_files_only": "仅支持 .zip 格式（komari-web build 产物）",
+    "webui_uploading": "正在上传后端页面...",
+    "webui_upload_success": "后端页面更新成功，请刷新页面生效",
+    "webui_upload_failed": "后端页面更新失败",
     "zip_files_only": "仅支持 .zip 格式"
   },
   "currency": {

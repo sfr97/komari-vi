@@ -1,4 +1,4 @@
-﻿package cmd
+package cmd
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"github.com/komari-monitor/komari/database/agentversion"
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/connectionlog"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/installscripts"
 	"github.com/komari-monitor/komari/database/lg"
@@ -83,6 +84,8 @@ func RunServer() {
 		log.Fatalf("Failed to create package directory: %v", err)
 	}
 	InitDatabase()
+	// 补齐上次异常退出/重启遗留的连接会话
+	connectionlog.CloseAllOpenOnStartup(time.Now())
 	if err := installscripts.EnsureDefaults(); err != nil {
 		log.Fatalf("Failed to init install scripts: %v", err)
 	}
@@ -299,6 +302,11 @@ func RunServer() {
 			themeGroup.POST("/update", admin.UpdateTheme)
 			themeGroup.POST("/settings", admin.UpdateThemeSettings)
 		}
+		// webui (override built-in frontend)
+		webuiGroup := adminAuthrized.Group("/webui")
+		{
+			webuiGroup.PUT("/upload", admin.UploadWebUI)
+		}
 		agentVersionGroup := adminAuthrized.Group("/agent-version")
 		{
 			// 兼容是否携带尾部斜杠，避免 POST multipart 在 307 重定向下卡住
@@ -455,6 +463,8 @@ func RunServer() {
 			notificationGroup.POST("/offline/edit", notification.EditOfflineNotification)
 			notificationGroup.POST("/offline/enable", notification.EnableOfflineNotification)
 			notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
+			notificationGroup.GET("/offline/logs", notification.ListOfflineConnectionLogs)
+			notificationGroup.GET("/offline/logs/chart", notification.ListOfflineConnectionLogsChart)
 			loadAlertGroup := notificationGroup.Group("/load")
 			{
 				loadAlertGroup.GET("/", notification.GetAllLoadNotifications)

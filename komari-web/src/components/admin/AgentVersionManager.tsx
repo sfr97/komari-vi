@@ -1,6 +1,5 @@
 import Loading from '@/components/loading'
 import { Badge, Button, Card, Dialog, Flex, IconButton, Switch, Text, TextArea, TextField } from '@radix-ui/themes'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -118,30 +117,17 @@ export function AgentVersionManager() {
 			</Flex>
 
 			<Card>
-				<div className="overflow-hidden">
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>{t('agent_version.version')}</TableHead>
-								<TableHead>{t('agent_version.changelog')}</TableHead>
-								<TableHead>{t('agent_version.packages_title')}</TableHead>
-								<TableHead>{t('agent_version.created_at')}</TableHead>
-								<TableHead className="text-center">{t('common.action')}</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{versions.length === 0 ? (
-								<TableRow>
-									<TableCell colSpan={5} className="text-center py-8">
-										<Text color="gray">{t('agent_version.empty')}</Text>
-									</TableCell>
-								</TableRow>
-							) : (
-								versions.map(v => <VersionRow key={v.id} version={v} onUpdate={fetchVersions} />)
-							)}
-						</TableBody>
-					</Table>
-				</div>
+				{versions.length === 0 ? (
+					<div className="text-center py-8">
+						<Text color="gray">{t('agent_version.empty')}</Text>
+					</div>
+				) : (
+					<div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+						{versions.map(v => (
+							<VersionCard key={v.id} version={v} onUpdate={fetchVersions} />
+						))}
+					</div>
+				)}
 			</Card>
 		</Flex>
 	)
@@ -261,7 +247,7 @@ const CreateVersionDialog = ({ onSuccess, onClose }: { onSuccess: () => void; on
 	)
 }
 
-const VersionRow = ({ version, onUpdate }: { version: AgentVersion; onUpdate: () => void }) => {
+const VersionCard = ({ version, onUpdate }: { version: AgentVersion; onUpdate: () => void }) => {
 	const { t } = useTranslation()
 	const [editOpen, setEditOpen] = useState(false)
 	const [deleteOpen, setDeleteOpen] = useState(false)
@@ -305,59 +291,86 @@ const VersionRow = ({ version, onUpdate }: { version: AgentVersion; onUpdate: ()
 
 	return (
 		<>
-			<TableRow>
-				<TableCell>
-					<Flex gap="2" align="center">
-						<Text weight="bold">{version.version}</Text>
-						{version.is_current && (
-							<Badge color="green" size="1">
-								{t('agent_version.current_badge')}
-							</Badge>
-						)}
+			<div className="rounded-lg border border-[var(--gray-a4)] p-4 bg-[var(--panel-solid)]">
+				<Flex justify="between" align="start" gap="3">
+					<div className="min-w-0">
+						<Flex gap="2" align="center" wrap="wrap">
+							<Text weight="bold" size="4" className="truncate">
+								{version.version}
+							</Text>
+							{version.is_current && (
+								<Badge color="green" size="1">
+									{t('agent_version.current_badge')}
+								</Badge>
+							)}
+						</Flex>
+						<Text size="1" color="gray" className="block mt-1">
+							{t('agent_version.created_at')}: {version.created_at ? new Date(version.created_at).toLocaleString() : '--'}
+						</Text>
+					</div>
+
+					<Flex gap="2" className="shrink-0">
+						<IconButton
+							size="2"
+							variant="soft"
+							color="green"
+							onClick={markCurrent}
+							disabled={actingId === version.id || version.is_current}
+							title={
+								version.is_current
+									? (t('agent_version.current_badge') as string)
+									: (t('agent_version.mark_current') as string)
+							}>
+							<Check size={16} />
+						</IconButton>
+						<IconButton size="2" variant="soft" onClick={() => setUploadOpen(true)} title={t('agent_version.upload_more')}>
+							<Upload size={16} />
+						</IconButton>
+						<IconButton size="2" variant="soft" onClick={() => setEditOpen(true)} title={t('common.edit')}>
+							<Pencil size={16} />
+						</IconButton>
+						<IconButton
+							size="2"
+							variant="soft"
+							color={version.is_current ? 'gray' : 'red'}
+							onClick={() => !version.is_current && setDeleteOpen(true)}
+							disabled={version.is_current}
+							title={
+								version.is_current
+									? (t('agent_version.cannot_delete_current', '不能删除当前版本') as string)
+									: (t('common.delete') as string)
+							}>
+							<Trash size={16} />
+						</IconButton>
 					</Flex>
-				</TableCell>
-				<TableCell>
-					<Text size="2" className="line-clamp-2 max-w-md">
+				</Flex>
+
+				<div className="mt-3">
+					<Text size="2" weight="medium">
+						{t('agent_version.changelog')}
+					</Text>
+					<Text size="2" color="gray" className="line-clamp-3 mt-1">
 						{version.changelog?.trim() ? version.changelog : t('agent_version.changelog_empty')}
 					</Text>
-				</TableCell>
-				<TableCell>
-					<Flex gap="1" wrap="wrap">
-						{version.packages && version.packages.length > 0 ? (
-							version.packages.map(p => <PackageBadge key={p.id} pkg={p} versionId={version.id} onUpdate={onUpdate} />)
-						) : (
-							<Text size="1" color="gray">
-								{t('agent_version.no_packages')}
-							</Text>
-						)}
-					</Flex>
-				</TableCell>
-				<TableCell>
-					<Text size="2" color="gray">
-						{version.created_at ? new Date(version.created_at).toLocaleString() : '--'}
+				</div>
+
+				<div className="mt-3">
+					<Text size="2" weight="medium">
+						{t('agent_version.packages_title')}
 					</Text>
-				</TableCell>
-				<TableCell>
-					<Flex gap="2" justify="center">
-						{!version.is_current && (
-							<IconButton size="1" variant="soft" color="green" onClick={markCurrent} disabled={actingId === version.id} title={t('agent_version.mark_current')}>
-								<Check size={14} />
-							</IconButton>
-						)}
-						<IconButton size="1" variant="soft" onClick={() => setUploadOpen(true)} title={t('agent_version.upload_more')}>
-							<Upload size={14} />
-						</IconButton>
-						<IconButton size="1" variant="soft" onClick={() => setEditOpen(true)} title={t('common.edit')}>
-							<Pencil size={14} />
-						</IconButton>
-						{!version.is_current && (
-							<IconButton size="1" variant="soft" color="red" onClick={() => setDeleteOpen(true)} title={t('common.delete')}>
-								<Trash size={14} />
-							</IconButton>
-						)}
-					</Flex>
-				</TableCell>
-			</TableRow>
+					{version.packages && version.packages.length > 0 ? (
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+							{version.packages.map(p => (
+								<PackageTile key={p.id} pkg={p} versionId={version.id} onUpdate={onUpdate} />
+							))}
+						</div>
+					) : (
+						<Text size="1" color="gray" className="mt-2">
+							{t('agent_version.no_packages')}
+						</Text>
+					)}
+				</div>
+			</div>
 
 			<Dialog.Root open={editOpen} onOpenChange={setEditOpen}>
 				<Dialog.Content style={{ maxWidth: 600 }}>
@@ -548,7 +561,7 @@ const UploadPackageDialog = ({ versionId, onSuccess, onClose }: { versionId: num
 	)
 }
 
-const PackageBadge = ({ pkg, versionId, onUpdate }: { pkg: AgentPackage; versionId: number; onUpdate: () => void }) => {
+const PackageTile = ({ pkg, versionId, onUpdate }: { pkg: AgentPackage; versionId: number; onUpdate: () => void }) => {
 	const { t } = useTranslation()
 	const [deleteOpen, setDeleteOpen] = useState(false)
 	const [deleting, setDeleting] = useState(false)
@@ -576,48 +589,39 @@ const PackageBadge = ({ pkg, versionId, onUpdate }: { pkg: AgentPackage; version
 
 	return (
 		<Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
-			<Flex
-				align="center"
-				gap="1"
-				className="px-2 py-1 rounded-md"
-				style={{ backgroundColor: 'var(--accent-3)' }}
-				title={pkg.file_name}>
-				<Text size="1" weight="medium">
-					{pkg.os}
-				</Text>
-				<Text size="1" color="gray">
-					/
-				</Text>
-				<Text size="1" color="gray">
-					{pkg.arch}
-				</Text>
-				<Text size="1" color="gray" className="ml-1">
-					({formatBytes(pkg.file_size)})
-				</Text>
-				<Flex gap="1" className="ml-1">
-					<IconButton
-						size="1"
-						variant="ghost"
-						color="blue"
-						onClick={e => {
-							e.stopPropagation()
-							handleDownload()
-						}}
-						title={t('agent_version.download') as string}>
-						<Download size={12} />
-					</IconButton>
-					<Dialog.Trigger>
+			<div className="rounded-md border border-[var(--gray-a4)] bg-[var(--gray-a2)] px-3 py-2" title={pkg.file_name}>
+				<Flex justify="between" align="center" gap="2">
+					<div className="min-w-0">
+						<Text size="2" weight="medium">
+							{pkg.os} <Text color="gray">/</Text> {pkg.arch}
+						</Text>
+						<Text size="1" color="gray" className="block mt-1 truncate font-mono">
+							{pkg.file_name}
+						</Text>
+					</div>
+					<Flex gap="2" align="center" className="shrink-0">
+						<Text size="1" color="gray">
+							{formatBytes(pkg.file_size)}
+						</Text>
 						<IconButton
 							size="1"
-							variant="ghost"
-							color="red"
-							onClick={e => e.stopPropagation()}
-							title={t('common.delete') as string}>
-							<Trash size={12} />
+							variant="soft"
+							color="blue"
+							onClick={e => {
+								e.stopPropagation()
+								handleDownload()
+							}}
+							title={t('agent_version.download') as string}>
+							<Download size={14} />
 						</IconButton>
-					</Dialog.Trigger>
+						<Dialog.Trigger>
+							<IconButton size="1" variant="soft" color="red" onClick={e => e.stopPropagation()} title={t('common.delete') as string}>
+								<Trash size={14} />
+							</IconButton>
+						</Dialog.Trigger>
+					</Flex>
 				</Flex>
-			</Flex>
+			</div>
 
 			<Dialog.Content style={{ maxWidth: 450 }}>
 				<Dialog.Title>{t('common.delete')}</Dialog.Title>

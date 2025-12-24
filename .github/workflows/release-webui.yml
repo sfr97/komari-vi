@@ -1,0 +1,52 @@
+name: Release Komari WebUI (komari-web zip)
+
+on:
+  push:
+    tags:
+      - "webui-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "23"
+          cache: "npm"
+          cache-dependency-path: komari-web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: komari-web
+        run: npm ci
+
+      - name: Build WebUI
+        working-directory: komari-web
+        run: npm run build
+
+      - name: Create WebUI zip (dist as root)
+        working-directory: komari-web
+        run: |
+          ZIP_NAME="komari-webui-${GITHUB_REF_NAME}.zip"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          cd dist
+          zip -r "../${ZIP_NAME}" .
+
+      - name: Ensure GitHub release exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --generate-notes
+
+      - name: Upload zip to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" "komari-web/${ZIP_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber

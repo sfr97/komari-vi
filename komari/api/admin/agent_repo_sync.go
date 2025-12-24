@@ -420,7 +420,11 @@ func PreviewRepoSync(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
 	}
-	repo, err := normalizeRepoInput(req.Repo)
+	repoInput := strings.TrimSpace(req.Repo)
+	if repoInput == "" {
+		repoInput = "danger-dream/komari-vi"
+	}
+	repo, err := normalizeRepoInput(repoInput)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
@@ -490,7 +494,11 @@ func StartRepoSync(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
 	}
-	repo, err := normalizeRepoInput(req.Repo)
+	repoInput := strings.TrimSpace(req.Repo)
+	if repoInput == "" {
+		repoInput = "danger-dream/komari-vi"
+	}
+	repo, err := normalizeRepoInput(repoInput)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return

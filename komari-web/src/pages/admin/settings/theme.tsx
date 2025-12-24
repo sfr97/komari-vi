@@ -30,6 +30,10 @@ const ThemePage = () => {
 	const [uploading, setUploading] = useState(false)
 	const [uploadProgress, setUploadProgress] = useState(0)
 	const [uploadXhr, setUploadXhr] = useState<XMLHttpRequest | null>(null)
+	const [webuiDialogOpen, setWebuiDialogOpen] = useState(false)
+	const [webuiUploading, setWebuiUploading] = useState(false)
+	const [webuiUploadProgress, setWebuiUploadProgress] = useState(0)
+	const [webuiUploadXhr, setWebuiUploadXhr] = useState<XMLHttpRequest | null>(null)
 	const [settingTheme, setSettingTheme] = useState<string | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
@@ -209,6 +213,88 @@ const ThemePage = () => {
 		}
 	}
 
+	// 上传 WebUI（覆盖后端内置页面）
+	const uploadWebUI = async (file: File) => {
+		if (!file.name.endsWith('.zip')) {
+			toast.error(t('theme.invalid_file_type'))
+			return
+		}
+
+		setWebuiUploading(true)
+		setWebuiUploadProgress(0)
+		const formData = new FormData()
+		formData.append('file', file)
+
+		return new Promise<void>((resolve, reject) => {
+			const xhr = new XMLHttpRequest()
+			setWebuiUploadXhr(xhr)
+
+			xhr.upload.addEventListener('progress', e => {
+				if (e.lengthComputable) {
+					const percentComplete = (e.loaded / e.total) * 100
+					setWebuiUploadProgress(Math.round(percentComplete))
+				}
+			})
+
+			xhr.addEventListener('load', async () => {
+				if (xhr.status === 413) {
+					toast.error(t('theme.uploda_413_content_too_large'))
+					setWebuiUploading(false)
+					setWebuiUploadProgress(0)
+					setWebuiUploadXhr(null)
+					return
+				}
+				if (xhr.status >= 200 && xhr.status < 300) {
+					try {
+						JSON.parse(xhr.responseText)
+						toast.success(t('theme.webui_upload_success'))
+						setWebuiDialogOpen(false)
+						setWebuiUploadProgress(0)
+						resolve()
+					} catch (err) {
+						toast.error(t('theme.webui_upload_failed') + ': Parse error')
+						reject(err)
+					}
+				} else {
+					try {
+						const errorData = JSON.parse(xhr.responseText)
+						throw new Error(errorData.message || 'Upload failed')
+					} catch (err) {
+						toast.error(t('theme.webui_upload_failed') + ': ' + (err instanceof Error ? err.message : 'Unknown error'))
+						reject(err)
+					}
+				}
+				setWebuiUploading(false)
+				setWebuiUploadXhr(null)
+			})
+
+			xhr.addEventListener('error', () => {
+				toast.error(t('theme.webui_upload_failed') + ': Network error')
+				setWebuiUploading(false)
+				setWebuiUploadProgress(0)
+				setWebuiUploadXhr(null)
+				reject(new Error('Network error'))
+			})
+
+			xhr.addEventListener('abort', () => {
+				toast.error(t('theme.webui_upload_failed') + ': Upload cancelled')
+				setWebuiUploading(false)
+				setWebuiUploadProgress(0)
+				setWebuiUploadXhr(null)
+				reject(new Error('Upload cancelled'))
+			})
+
+			xhr.open('PUT', '/api/admin/webui/upload')
+			xhr.send(formData)
+		})
+	}
+
+	const cancelWebuiUpload = () => {
+		if (webuiUploadXhr) {
+			webuiUploadXhr.abort()
+		}
+	}
+
 	// 设置主题
 	const setActiveTheme = async (themeShort: string) => {
 		try {
@@ -348,6 +434,10 @@ const ThemePage = () => {
 							{`${currentTheme}设置`}
 						</Button>
 					)}
+					<Button variant="soft" onClick={() => setWebuiDialogOpen(true)} className="gap-2">
+						<RefreshCw size={16} />
+						{t('theme.webui_upload')}
+					</Button>
 					<Button onClick={() => setUploadDialogOpen(true)} className="gap-2">
 						<Upload size={16} />
 						{t('theme.upload')}
@@ -456,6 +546,25 @@ const ThemePage = () => {
 				cancelUploadLabel={t('common.cancel')}
 				onCancelUpload={cancelUpload}
 				onFileSelected={file => uploadTheme(file)}
+				closeLabel={t('common.cancel')}
+			/>
+
+			{/* 上传 WebUI 对话框 */}
+			<UploadDialog
+				open={webuiDialogOpen}
+				onOpenChange={setWebuiDialogOpen}
+				title={t('theme.webui_upload_title')}
+				description={t('theme.webui_upload_description')}
+				accept=".zip"
+				dragDropText={t('theme.drag_drop')}
+				clickToBrowseText={t('theme.or_click_to_browse')}
+				hintText={t('theme.webui_zip_files_only')}
+				uploading={webuiUploading}
+				progress={webuiUploadProgress}
+				uploadingText={t('theme.webui_uploading')}
+				cancelUploadLabel={t('common.cancel')}
+				onCancelUpload={cancelWebuiUpload}
+				onFileSelected={file => uploadWebUI(file)}
 				closeLabel={t('common.cancel')}
 			/>
 

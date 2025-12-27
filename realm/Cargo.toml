@@ -1,0 +1,101 @@
+[package]
+name = "realm"
+version = "2.9.8"
+authors = ["zhboner <zhboner@gmail.com>"]
+edition = "2021"
+
+
+[workspace]
+members = [
+    "realm_io",
+    "realm_lb",
+    "realm_core",
+    "realm_hook",
+    "realm_syscall"
+]
+
+
+[lib]
+name = "realm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "realm"
+path = "src/bin.rs"
+
+
+[dependencies]
+# realm
+realm_core = { path = "realm_core" }
+
+# common
+cfg-if = "1"
+futures = "0.3"
+walkdir = "2"
+
+# runtime
+tokio = { version = "1", features = ["rt"] }
+
+# logger
+log = "0.4"
+fern = "0.7"
+chrono = "0.4"
+
+# command
+clap = { version = "4", features = ["string"] }
+toml = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# web api
+axum = { version = "0.7", optional = true }
+uuid = { version = "1", optional = true, default-features = false, features = ["v4"] }
+headers = { version = "0.4", default-features = false, optional = true }
+
+# malloc
+mimalloc = { version = "0.1", optional = true, default-features = false }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = { version = "0.5", optional = true }
+mmap-allocator = { version = "0.3", optional = true }
+
+
+[dev-dependencies]
+env_logger = "0.11"
+tokio = { version = "1", features = ["macros"] }
+tower = "0.5"
+http-body-util = "0.1"
+
+
+[features]
+default = ["proxy", "balance", "multi-thread", "transport", "transport-tls-awslc", "batched-udp", "brutal-shutdown", "api"]
+default-ring = ["proxy", "balance", "multi-thread", "transport", "transport-tls-ring", "batched-udp", "brutal-shutdown", "api"]
+hook = ["realm_core/hook"]
+proxy = ["realm_core/proxy"]
+brutal-shutdown = ["realm_core/brutal-shutdown"]
+balance = ["realm_core/balance"]
+transport = ["realm_core/transport", "realm_core/transport-boost"]
+transport-tls-ring = ["realm_core/transport-tls-ring"]
+transport-tls-awslc = ["realm_core/transport-tls-awslc"]
+batched-udp = ["realm_core/batched-udp"]
+multi-thread = ["tokio/rt-multi-thread", "realm_core/multi-thread"]
+jemalloc = ["jemallocator"]
+mi-malloc = ["mimalloc"]
+page-alloc = ["mmap-allocator"]
+api = ["axum", "uuid", "headers"]
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+incremental = false
+panic = "unwind"
+strip = true
+
+[profile.release-thin]
+inherits = "release"
+opt-level = "s"
+
+[patch.crates-io]
+realm_lb = { path = "realm_lb" }

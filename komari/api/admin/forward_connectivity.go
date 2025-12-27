@@ -40,6 +40,7 @@ func TestConnectivity(c *gin.Context) {
 		req.Timeout = 5
 	}
 	cfgJSON := req.ConfigJSON
+	ruleType := ""
 	if cfgJSON == "" && req.RuleID > 0 {
 		rule, err := dbforward.GetForwardRule(req.RuleID)
 		if err != nil {
@@ -47,6 +48,7 @@ func TestConnectivity(c *gin.Context) {
 			return
 		}
 		cfgJSON = rule.ConfigJSON
+		ruleType = rule.Type
 	}
 	if cfgJSON == "" {
 		api.RespondError(c, http.StatusBadRequest, "config_json is required")
@@ -56,6 +58,10 @@ func TestConnectivity(c *gin.Context) {
 	var cfg forward.RuleConfig
 	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
 		api.RespondError(c, http.StatusBadRequest, "invalid config_json")
+		return
+	}
+	if err := forward.ValidateRuleConfigStrategies(ruleType, cfg); err != nil {
+		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 

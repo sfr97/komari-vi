@@ -1,12 +1,12 @@
-import { Flex, Text, TextArea, Button, Select, Card, Badge, Grid, Separator } from '@radix-ui/themes'
+import { Flex, Text, Button, Card, Badge, Grid } from '@radix-ui/themes'
 import { useTranslation } from 'react-i18next'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Drawer, DrawerClose, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ForwardRule } from '..'
 import { useNodeDetails } from '@/contexts/NodeDetailsContext'
-import { Server, ArrowRight, Waypoints, Link2, Code, Eye, Settings, Copy, CheckCircle } from 'lucide-react'
+import { Server, ArrowRight, Waypoints, Link2, Code, Eye, Copy, CheckCircle } from 'lucide-react'
 
 type Props = {
 	rule: ForwardRule | null
@@ -17,16 +17,7 @@ const RuleDetailDrawer = ({ rule, onClose }: Props) => {
 	const { t } = useTranslation()
 	const { nodeDetail } = useNodeDetails()
 	const isMobile = useIsMobile()
-	const [toml, setToml] = useState('')
-	const [saving, setSaving] = useState(false)
-	const [previewLoading, setPreviewLoading] = useState(false)
-	const [nodeConfigs, setNodeConfigs] = useState<Record<string, string>>({})
-	const [activeNode, setActiveNode] = useState('')
 	const [copied, setCopied] = useState(false)
-
-	useEffect(() => {
-		setToml(rule?.realm_config || '')
-	}, [rule])
 
 	const parsedConfig = useMemo(() => {
 		if (!rule?.config_json) return null
@@ -44,108 +35,6 @@ const RuleDetailDrawer = ({ rule, onClose }: Props) => {
 		}
 		return map
 	}, [nodeDetail])
-
-	const nodeOptions = useMemo(() => {
-		const items: { id: string; label: string }[] = []
-		const seen = new Set<string>()
-		const push = (id: string, labelPrefix: string) => {
-			if (!id || seen.has(id)) return
-			seen.add(id)
-			const name = nodeMap[id] || id
-			items.push({ id, label: `${labelPrefix}: ${name}` })
-		}
-		if (parsedConfig?.entry_node_id) {
-			push(parsedConfig.entry_node_id, t('forward.entry'))
-		}
-		for (const relay of parsedConfig?.relays || []) {
-			push(relay.node_id, t('forward.relayNodes'))
-		}
-		for (const hop of parsedConfig?.hops || []) {
-			if (hop.type === 'direct') {
-				push(hop.node_id, t('forward.directHop'))
-			} else if (hop.type === 'relay_group') {
-				for (const relay of hop.relays || []) {
-					push(relay.node_id, t('forward.relayGroup'))
-				}
-			}
-		}
-		return items
-	}, [parsedConfig, nodeMap, t])
-
-	useEffect(() => {
-		if (!nodeOptions.length) {
-			setActiveNode('')
-			return
-		}
-		if (!nodeOptions.some(node => node.id === activeNode)) {
-			setActiveNode(nodeOptions[0].id)
-		}
-	}, [nodeOptions, activeNode])
-
-	useEffect(() => {
-		const fetchPreview = async () => {
-			if (!rule?.id || !rule.config_json) {
-				setNodeConfigs({})
-				return
-			}
-			setPreviewLoading(true)
-			try {
-				const res = await fetch('/api/v1/forwards/preview-config', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ type: rule.type, config_json: rule.config_json })
-				})
-				if (!res.ok) throw new Error(`HTTP ${res.status}`)
-				const body = await res.json()
-				setNodeConfigs(body.data?.node_configs || {})
-			} catch (e: any) {
-				setNodeConfigs({})
-				toast.error(e?.message || 'Load preview failed')
-			} finally {
-				setPreviewLoading(false)
-			}
-		}
-		fetchPreview()
-	}, [rule])
-
-	const saveToml = async () => {
-		if (!rule?.id) return
-		setSaving(true)
-		try {
-			let configJson: string | undefined
-			if (rule.config_json) {
-				try {
-					const parsed = JSON.parse(rule.config_json)
-					parsed.entry_realm_config = toml
-					configJson = JSON.stringify(parsed, null, 2)
-				} catch {
-					configJson = undefined
-				}
-			}
-			const res = await fetch(`/api/v1/forwards/${rule.id}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ realm_config: toml, ...(configJson ? { config_json: configJson } : {}) })
-			})
-			if (!res.ok) throw new Error(`HTTP ${res.status}`)
-			toast.success(t('forward.templateSaved'))
-		} catch (e: any) {
-			toast.error(e?.message || 'Save failed')
-		} finally {
-			setSaving(false)
-		}
-	}
-
-	const applyConfigs = async () => {
-		if (!rule?.id) return
-		try {
-			const res = await fetch(`/api/v1/forwards/${rule.id}/apply-configs`, { method: 'POST' })
-			if (!res.ok) throw new Error(`HTTP ${res.status}`)
-			toast.success(t('forward.applyConfigsSuccess'))
-		} catch (e: any) {
-			toast.error(e?.message || t('forward.applyConfigsFailed'))
-		}
-	}
 
 	const copyConfig = async () => {
 		if (!rule?.config_json) return
@@ -307,66 +196,6 @@ const RuleDetailDrawer = ({ rule, onClose }: Props) => {
 									{rule?.config_json ? JSON.stringify(JSON.parse(rule.config_json), null, 2) : t('forward.configPlaceholder')}
 								</pre>
 							</div>
-						</Card>
-
-						{/* Node Configs Preview */}
-						{nodeOptions.length > 0 && (
-							<Card className="p-4">
-								<Flex justify="between" align="center" className="mb-3">
-									<Text size="2" weight="bold" className="flex items-center gap-2">
-										<Settings size={16} /> {t('forward.previewConfig')}
-									</Text>
-									<Button variant="soft" size="1" onClick={applyConfigs} disabled={rule?.status !== 'running'}>
-										{t('forward.applyConfigs')}
-									</Button>
-								</Flex>
-								<div className="space-y-3">
-									<Select.Root value={activeNode} onValueChange={setActiveNode}>
-										<Select.Trigger className="w-full" placeholder={t('forward.selectNode')} />
-										<Select.Content>
-											{nodeOptions.map(node => (
-												<Select.Item key={node.id} value={node.id}>
-													{node.label}
-												</Select.Item>
-											))}
-										</Select.Content>
-									</Select.Root>
-									{previewLoading && (
-										<Text size="1" color="gray">
-											{t('forward.previewLoading')}
-										</Text>
-									)}
-									<TextArea
-										rows={8}
-										value={nodeConfigs[activeNode] || ''}
-										readOnly
-										className="font-mono text-xs"
-										placeholder={t('forward.noConfigPreview', { defaultValue: '暂无配置预览' })}
-									/>
-								</div>
-							</Card>
-						)}
-
-						{/* Realm TOML Editor */}
-						<Card className="p-4">
-							<Text size="2" weight="bold" className="mb-3 flex items-center gap-2">
-								<Code size={16} /> Realm TOML
-							</Text>
-							<TextArea
-								rows={10}
-								value={toml}
-								onChange={e => setToml(e.target.value)}
-								className="font-mono text-xs"
-								placeholder={t('forward.realmConfigPlaceholder', { defaultValue: '输入 Realm TOML 配置...' })}
-							/>
-							<Flex justify="end" gap="2" mt="3">
-								<Button variant="soft" size="2" onClick={() => setToml(rule?.realm_config || '')}>
-									{t('common.reset', { defaultValue: '重置' })}
-								</Button>
-								<Button size="2" onClick={saveToml} disabled={saving}>
-									{saving ? t('common.saving', { defaultValue: '保存中...' }) : t('forward.save', { defaultValue: '保存' })}
-								</Button>
-							</Flex>
 						</Card>
 
 						{/* Statistics */}

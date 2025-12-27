@@ -22,17 +22,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultRealmConfigTemplate = `[log]
-level = "info"
-output = "stdout"
-
-[network]
-no_tcp = false
-use_udp = false
-tcp_timeout = 10
-tcp_keepalive = 30
-`
-
 // zipDirectoryExcluding 将 srcDir 打包为 dstZip，exclude 是绝对路径集合需要排除
 func zipDirectoryExcluding(srcDir, dstZip string, exclude map[string]struct{}) error {
 	// 规范化排除路径为绝对路径
@@ -364,6 +353,23 @@ func MergeDatabase(db *gorm.DB) {
 		}
 	}
 
+	// Forward (转发) legacy cleanup: realm template + rule TOML are fully deprecated.
+	// Note: AutoMigrate won't drop columns/tables, so we drop them explicitly when detected.
+	if db.Migrator().HasColumn("forward_rules", "realm_config") {
+		log.Println("[forward] dropping legacy forward_rules.realm_config ...")
+		if err := db.Migrator().DropColumn("forward_rules", "realm_config"); err != nil {
+			log.Printf("[forward] drop forward_rules.realm_config failed: %v", err)
+		}
+	}
+	for _, tbl := range []string{"realm_config_template", "realm_config_templates"} {
+		if db.Migrator().HasTable(tbl) {
+			log.Printf("[forward] dropping legacy table %s ...", tbl)
+			if err := db.Migrator().DropTable(tbl); err != nil {
+				log.Printf("[forward] drop table %s failed: %v", tbl, err)
+			}
+		}
+	}
+
 	migrateSPPingLatencyColumns(db)
 }
 
@@ -531,12 +537,12 @@ func GetDBInstance() *gorm.DB {
 			&models.SPPingRecord{},
 			&models.ForwardRule{},
 			&models.ForwardStat{},
+			&models.ForwardInstanceStat{},
 			&models.ForwardTrafficHistory{},
 			&models.ForwardAlertConfig{},
 			&models.ForwardAlertHistory{},
 			&models.RealmBinary{},
 			&models.ForwardSystemSettings{},
-			&models.RealmConfigTemplate{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)
@@ -592,15 +598,4 @@ func ensureForwardDefaults(db *gorm.DB) {
 		}
 	}
 
-	// Realm config template (single row)
-	var template models.RealmConfigTemplate
-	if err := db.First(&template, 1).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		template = models.RealmConfigTemplate{
-			ID:           1,
-			TemplateToml: defaultRealmConfigTemplate,
-		}
-		if createErr := db.Create(&template).Error; createErr != nil {
-			log.Printf("Failed to seed realm_config_template: %v", createErr)
-		}
-	}
 }

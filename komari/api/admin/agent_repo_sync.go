@@ -26,13 +26,13 @@ import (
 )
 
 type githubRelease struct {
-	ID          int64        `json:"id"`
-	Name        string       `json:"name"`
-	TagName     string       `json:"tag_name"`
-	Body        string       `json:"body"`
-	Draft       bool         `json:"draft"`
-	Prerelease  bool         `json:"prerelease"`
-	PublishedAt *time.Time   `json:"published_at"`
+	ID          int64         `json:"id"`
+	Name        string        `json:"name"`
+	TagName     string        `json:"tag_name"`
+	Body        string        `json:"body"`
+	Draft       bool          `json:"draft"`
+	Prerelease  bool          `json:"prerelease"`
+	PublishedAt *time.Time    `json:"published_at"`
 	Assets      []githubAsset `json:"assets"`
 }
 
@@ -45,18 +45,18 @@ type githubAsset struct {
 }
 
 type repoSyncPreviewRequest struct {
-	Repo            string `json:"repo"`
-	Keyword         string `json:"keyword"`
-	IncludePrerelease bool  `json:"include_prerelease"`
+	Repo              string `json:"repo"`
+	Keyword           string `json:"keyword"`
+	IncludePrerelease bool   `json:"include_prerelease"`
 }
 
 type repoSyncPreviewRelease struct {
-	ReleaseID   int64  `json:"release_id"`
-	Name        string `json:"name"`
-	TagName     string `json:"tag_name"`
-	Body        string `json:"body"`
-	Prerelease  bool   `json:"prerelease"`
-	PublishedAt *time.Time `json:"published_at"`
+	ReleaseID   int64                  `json:"release_id"`
+	Name        string                 `json:"name"`
+	TagName     string                 `json:"tag_name"`
+	Body        string                 `json:"body"`
+	Prerelease  bool                   `json:"prerelease"`
+	PublishedAt *time.Time             `json:"published_at"`
 	Assets      []repoSyncPreviewAsset `json:"assets"`
 }
 
@@ -84,13 +84,13 @@ type repoSyncStartResponse struct {
 }
 
 type repoSyncProgress struct {
-	CurrentFile      string `json:"current_file"`
-	FileDownloaded   int64  `json:"file_downloaded"`
-	FileTotal        int64  `json:"file_total"`
-	OverallDownloaded int64 `json:"overall_downloaded"`
-	OverallTotal     int64  `json:"overall_total"`
-	Index            int    `json:"index"`
-	Count            int    `json:"count"`
+	CurrentFile       string `json:"current_file"`
+	FileDownloaded    int64  `json:"file_downloaded"`
+	FileTotal         int64  `json:"file_total"`
+	OverallDownloaded int64  `json:"overall_downloaded"`
+	OverallTotal      int64  `json:"overall_total"`
+	Index             int    `json:"index"`
+	Count             int    `json:"count"`
 }
 
 type sseEvent struct {

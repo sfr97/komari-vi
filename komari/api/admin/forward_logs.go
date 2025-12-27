@@ -3,9 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
@@ -41,73 +39,17 @@ func ListForwardLogs(c *gin.Context) {
 
 // GetForwardLog 获取指定节点日志
 func GetForwardLog(c *gin.Context) {
-	id, err := api.GetUintParam(c, "id")
-	if err != nil {
-		api.RespondError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	nodeID := strings.TrimSpace(c.Param("nodeId"))
-	if nodeID == "" {
-		api.RespondError(c, http.StatusBadRequest, "nodeId is required")
-		return
-	}
-	lines, _ := strconv.Atoi(c.DefaultQuery("lines", "200"))
-	if lines <= 0 {
-		lines = 200
-	}
-	res, err := forward.SendTaskToNode(nodeID, forward.TaskGetRealmLog, forward.GetRealmLogRequest{
-		RuleID: id,
-		NodeID: nodeID,
-		Lines:  lines,
-	}, 15*time.Second)
-	if err != nil && res.Message == "" {
-		res.Message = err.Error()
-	}
-	api.RespondSuccess(c, res)
+	api.RespondError(c, http.StatusGone, "forward log APIs are deprecated")
 }
 
 // DeleteForwardLog 删除指定节点日志
 func DeleteForwardLog(c *gin.Context) {
-	id, err := api.GetUintParam(c, "id")
-	if err != nil {
-		api.RespondError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	nodeID := strings.TrimSpace(c.Param("nodeId"))
-	if nodeID == "" {
-		api.RespondError(c, http.StatusBadRequest, "nodeId is required")
-		return
-	}
-	res, err := forward.SendTaskToNode(nodeID, forward.TaskDeleteRealmLog, forward.DeleteRealmLogRequest{
-		RuleID: id,
-		NodeID: nodeID,
-	}, 15*time.Second)
-	if err != nil && res.Message == "" {
-		res.Message = err.Error()
-	}
-	api.RespondSuccess(c, res)
+	api.RespondError(c, http.StatusGone, "forward log APIs are deprecated")
 }
 
 // ClearForwardLog 清空指定节点日志
 func ClearForwardLog(c *gin.Context) {
-	id, err := api.GetUintParam(c, "id")
-	if err != nil {
-		api.RespondError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	nodeID := strings.TrimSpace(c.Param("nodeId"))
-	if nodeID == "" {
-		api.RespondError(c, http.StatusBadRequest, "nodeId is required")
-		return
-	}
-	res, err := forward.SendTaskToNode(nodeID, forward.TaskClearRealmLog, forward.ClearRealmLogRequest{
-		RuleID: id,
-		NodeID: nodeID,
-	}, 15*time.Second)
-	if err != nil && res.Message == "" {
-		res.Message = err.Error()
-	}
-	api.RespondSuccess(c, res)
+	api.RespondError(c, http.StatusGone, "forward log APIs are deprecated")
 }
 
 func collectRuleNodes(rule *models.ForwardRule) []string {

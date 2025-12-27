@@ -170,20 +170,20 @@ func buildAlertCandidates(stat *models.ForwardStat, cfg *models.ForwardAlertConf
 		// 避免多节点重复触发：仅入口节点判断流量突增
 		if isEntry {
 			if spike := checkTrafficSpike(stat, cfg.TrafficSpikeThreshold); spike {
-			candidates = append(candidates, alertCandidate{
-				alertType: "traffic_spike",
-				eventType: messageevent.ForwardTrafficSpike,
-				severity:  "warning",
-				message:   fmt.Sprintf("转发规则 [%s] 流量突增", rule.Name),
-				details: map[string]interface{}{
-					"node_id":   stat.NodeID,
-					"rule_id":   stat.RuleID,
-					"bytes":     stat.TrafficInBytes + stat.TrafficOutBytes,
-					"threshold": cfg.TrafficSpikeThreshold,
-					"timestamp": time.Now().UTC(),
-				},
-				emoji: "🚀",
-			})
+				candidates = append(candidates, alertCandidate{
+					alertType: "traffic_spike",
+					eventType: messageevent.ForwardTrafficSpike,
+					severity:  "warning",
+					message:   fmt.Sprintf("转发规则 [%s] 流量突增", rule.Name),
+					details: map[string]interface{}{
+						"node_id":   stat.NodeID,
+						"rule_id":   stat.RuleID,
+						"bytes":     stat.TrafficInBytes + stat.TrafficOutBytes,
+						"threshold": cfg.TrafficSpikeThreshold,
+						"timestamp": time.Now().UTC(),
+					},
+					emoji: "🚀",
+				})
 			}
 		}
 	}

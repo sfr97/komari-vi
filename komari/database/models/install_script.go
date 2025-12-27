@@ -7,4 +7,3 @@ type InstallScript struct {
 	CreatedAt LocalTime `json:"created_at"`
 	UpdatedAt LocalTime `json:"updated_at"`
 }
-

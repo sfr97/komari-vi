@@ -331,7 +331,6 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 
 			RuleID            uint                   `json:"rule_id"`
 			NodeID            string                 `json:"node_id"`
-			RealmConfig       string                 `json:"realm_config"`
 			ConfigJSONUpdates map[string]interface{} `json:"config_json_updates"`
 			Reason            string                 `json:"reason"`
 		}
@@ -342,7 +341,6 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 		payload := struct {
 			RuleID            uint                   `json:"rule_id"`
 			NodeID            string                 `json:"node_id"`
-			RealmConfig       string                 `json:"realm_config"`
 			ConfigJSONUpdates map[string]interface{} `json:"config_json_updates"`
 			Reason            string                 `json:"reason"`
 		}{}
@@ -354,15 +352,45 @@ func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
 		} else {
 			payload.RuleID = env.RuleID
 			payload.NodeID = env.NodeID
-			payload.RealmConfig = env.RealmConfig
 			payload.ConfigJSONUpdates = env.ConfigJSONUpdates
 			payload.Reason = env.Reason
 		}
 		go func() {
-			if err := forward.ApplyConfigSync(payload.RuleID, payload.NodeID, payload.RealmConfig, payload.ConfigJSONUpdates, payload.Reason); err != nil {
+			if err := forward.ApplyConfigSync(payload.RuleID, payload.NodeID, payload.ConfigJSONUpdates, payload.Reason); err != nil {
 				log.Printf("apply forward config sync failed: %v", err)
 			}
 		}()
+	case "forward_instance_stats":
+		var payload struct {
+			RuleID        uint            `json:"rule_id"`
+			NodeID        string          `json:"node_id"`
+			InstanceID    string          `json:"instance_id"`
+			Listen        string          `json:"listen"`
+			ListenPort    int             `json:"listen_port"`
+			Stats         json.RawMessage `json:"stats"`
+			Route         json.RawMessage `json:"route"`
+			LastUpdatedAt time.Time       `json:"last_updated_at"`
+		}
+		if err := json.Unmarshal(message, &payload); err != nil {
+			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid forward_instance_stats format"})
+			return
+		}
+		if payload.RuleID == 0 || payload.NodeID == "" || payload.InstanceID == "" {
+			conn.WriteJSON(gin.H{"status": "error", "error": "Missing rule_id/node_id/instance_id"})
+			return
+		}
+		if err := forward.UpdateForwardInstanceStats(forward.ForwardInstanceStats{
+			RuleID:        payload.RuleID,
+			NodeID:        payload.NodeID,
+			InstanceID:    payload.InstanceID,
+			Listen:        payload.Listen,
+			ListenPort:    payload.ListenPort,
+			Stats:         payload.Stats,
+			Route:         payload.Route,
+			LastUpdatedAt: payload.LastUpdatedAt,
+		}); err != nil {
+			log.Printf("save forward_instance_stats failed: %v", err)
+		}
 	case "forward_stats":
 		var payload struct {
 			RuleID            uint            `json:"rule_id"`

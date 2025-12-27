@@ -256,15 +256,15 @@ func StartSSHInstall(c *gin.Context) {
 		Target     sshTarget `json:"target" binding:"required"`
 		Command    string    `json:"command"`
 		Options    struct {
-			DisableWebSsh    bool   `json:"disable_web_ssh"`
-			DisableAutoUpdate bool  `json:"disable_auto_update"`
-			IgnoreUnsafeCert bool   `json:"ignore_unsafe_cert"`
-			InstallGhproxy   string `json:"install_ghproxy"`
-			InstallDir       string `json:"install_dir"`
-			ServiceName      string `json:"install_service_name"`
-			InstallVersion   string `json:"install_version"`
+			DisableWebSsh     bool   `json:"disable_web_ssh"`
+			DisableAutoUpdate bool   `json:"disable_auto_update"`
+			IgnoreUnsafeCert  bool   `json:"ignore_unsafe_cert"`
+			InstallGhproxy    string `json:"install_ghproxy"`
+			InstallDir        string `json:"install_dir"`
+			ServiceName       string `json:"install_service_name"`
+			InstallVersion    string `json:"install_version"`
 		} `json:"options"`
-	} 
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		api.RespondError(c, http.StatusBadRequest, "请求格式错误: "+err.Error())
 		return
@@ -454,7 +454,7 @@ func shellQuoteArgs(args []string) string {
 }
 
 func shellQuote(s string) string {
-	// 单引号安全引用：' -> '\'' 
+	// 单引号安全引用：' -> '\''
 	if s == "" {
 		return "''"
 	}

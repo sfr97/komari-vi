@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
@@ -21,7 +22,6 @@ type forwardRulePayload struct {
 	Type        string `json:"type"`
 	Status      string `json:"status"`
 	ConfigJSON  string `json:"config_json"`
-	RealmConfig string `json:"realm_config"`
 }
 
 func ListForwards(c *gin.Context) {
@@ -56,6 +56,10 @@ func CreateForward(c *gin.Context) {
 	configJSON := payload.ConfigJSON
 	if configJSON != "" {
 		configJSON = sanitizeConfigJSON(configJSON)
+		if err := validateConfigJSONStrategies(payload.Type, configJSON); err != nil {
+			api.RespondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	rule := models.ForwardRule{
 		IsEnabled:   payload.IsEnabled != nil && *payload.IsEnabled,
@@ -67,7 +71,6 @@ func CreateForward(c *gin.Context) {
 		Type:        payload.Type,
 		Status:      payload.Status,
 		ConfigJSON:  configJSON,
-		RealmConfig: payload.RealmConfig,
 	}
 	if rule.Status == "" {
 		rule.Status = "stopped"
@@ -112,23 +115,27 @@ func UpdateForward(c *gin.Context) {
 		updates["status"] = payload.Status
 	}
 	if payload.ConfigJSON != "" {
-		updates["config_json"] = sanitizeConfigJSON(payload.ConfigJSON)
+		configJSON := sanitizeConfigJSON(payload.ConfigJSON)
+		if err := validateConfigJSONStrategies(payload.Type, configJSON); err != nil {
+			api.RespondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["config_json"] = configJSON
 	}
-	if payload.RealmConfig != "" {
-		updates["realm_config"] = payload.RealmConfig
-	}
-	if len(updates) > 0 && oldRule != nil && oldRule.Status == "running" && (updates["config_json"] != nil || updates["realm_config"] != nil) {
+	if len(updates) > 0 && oldRule != nil && oldRule.Status == "running" && updates["config_json"] != nil {
 		newRule := *oldRule
+		if v, ok := updates["type"].(string); ok && v != "" {
+			newRule.Type = v
+		}
 		if v, ok := updates["config_json"].(string); ok {
 			newRule.ConfigJSON = v
-		}
-		if v, ok := updates["realm_config"].(string); ok {
-			newRule.RealmConfig = v
 		}
 		if err := forward.ApplyHotUpdate(oldRule, &newRule); err != nil {
 			api.RespondError(c, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// ApplyHotUpdate may fill *_current_port for newly-added instances; persist the mutated config.
+		updates["config_json"] = newRule.ConfigJSON
 	}
 	if err := dbforward.UpdateForwardRule(id, updates); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
@@ -144,6 +151,29 @@ func DeleteForward(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	rule, err := dbforward.GetForwardRule(id)
+	if err != nil {
+		api.RespondError(c, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// P3: delete requires full cleanup to avoid leftovers.
+	if rule != nil && strings.TrimSpace(rule.ConfigJSON) != "" {
+		results, ok, stopErr := stopForwardRule(rule)
+		if stopErr != nil {
+			api.RespondError(c, http.StatusBadGateway, stopErr.Error())
+			return
+		}
+		if !ok {
+			api.RespondError(c, http.StatusBadGateway, "cleanup failed on some nodes, abort delete")
+			return
+		}
+		_ = results
+		_ = dbforward.UpdateForwardRule(id, map[string]interface{}{"status": "stopped"})
+	}
+	// P4: cleanup instance/node stats to avoid orphan rows.
+	_ = dbforward.DeleteForwardInstanceStatsByRule(id)
+	_ = dbforward.DeleteForwardStatsByRule(id)
 	if err := dbforward.DeleteForwardRule(id); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -241,28 +271,6 @@ func UpdateForwardSystemSettings(c *gin.Context) {
 	api.RespondSuccess(c, payload)
 }
 
-func GetRealmTemplate(c *gin.Context) {
-	tmpl, err := dbforward.GetRealmConfigTemplate()
-	if err != nil {
-		api.RespondError(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	api.RespondSuccess(c, tmpl)
-}
-
-func UpdateRealmTemplate(c *gin.Context) {
-	var payload models.RealmConfigTemplate
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.RespondError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := dbforward.UpdateRealmConfigTemplate(&payload); err != nil {
-		api.RespondError(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	api.RespondSuccess(c, payload)
-}
-
 func valueOrDefaultInt(ptr *int, def int) int {
 	if ptr == nil {
 		return def
@@ -271,23 +279,50 @@ func valueOrDefaultInt(ptr *int, def int) int {
 }
 
 func sanitizeConfigJSON(raw string) string {
-	var cfg forward.RuleConfig
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
 		return raw
 	}
-	cfg.EntryRealmConfig = forward.SanitizeManualRealmConfig(cfg.EntryRealmConfig)
-	for i := range cfg.Relays {
-		cfg.Relays[i].RealmConfig = forward.SanitizeManualRealmConfig(cfg.Relays[i].RealmConfig)
-	}
-	for i := range cfg.Hops {
-		cfg.Hops[i].RealmConfig = forward.SanitizeManualRealmConfig(cfg.Hops[i].RealmConfig)
-		for j := range cfg.Hops[i].Relays {
-			cfg.Hops[i].Relays[j].RealmConfig = forward.SanitizeManualRealmConfig(cfg.Hops[i].Relays[j].RealmConfig)
+
+	// Realm TOML has been deprecated: drop any realm_config fields from incoming config_json.
+	delete(obj, "entry_realm_config")
+	delete(obj, "realm_config")
+
+	if relays, ok := obj["relays"].([]any); ok {
+		for _, item := range relays {
+			if m, ok := item.(map[string]any); ok {
+				delete(m, "realm_config")
+			}
 		}
 	}
-	b, err := json.Marshal(cfg)
+	if hops, ok := obj["hops"].([]any); ok {
+		for _, item := range hops {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			delete(m, "realm_config")
+			if rs, ok := m["relays"].([]any); ok {
+				for _, r := range rs {
+					if rm, ok := r.(map[string]any); ok {
+						delete(rm, "realm_config")
+					}
+				}
+			}
+		}
+	}
+
+	b, err := json.Marshal(obj)
 	if err != nil {
 		return raw
 	}
 	return string(b)
+}
+
+func validateConfigJSONStrategies(ruleType string, configJSON string) error {
+	var cfg forward.RuleConfig
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		return err
+	}
+	return forward.ValidateRuleConfigStrategies(ruleType, cfg)
 }

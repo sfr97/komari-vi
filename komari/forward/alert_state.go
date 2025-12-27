@@ -41,4 +41,3 @@ func getAlertClearedAt(ruleID uint, alertType string) (time.Time, bool) {
 	}
 	return st.clearedAt, true
 }
-

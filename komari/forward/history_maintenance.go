@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	dbforward "github.com/komari-monitor/komari/database/forward"
 	"github.com/komari-monitor/komari/database/dbcore"
+	dbforward "github.com/komari-monitor/komari/database/forward"
 	"github.com/komari-monitor/komari/database/models"
 	"gorm.io/gorm"
 )
@@ -155,12 +155,12 @@ func aggregateOneBucket(db *gorm.DB, bucketStart time.Time, bucketEnd time.Time)
 	}
 
 	type agg struct {
-		ruleID     uint
-		nodeID     string
-		inSum      int64
-		outSum     int64
-		connSum    int64
-		latSum     int64
+		ruleID      uint
+		nodeID      string
+		inSum       int64
+		outSum      int64
+		connSum     int64
+		latSum      int64
 		sampleCount int64
 	}
 	type key struct {

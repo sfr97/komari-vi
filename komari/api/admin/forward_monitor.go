@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
@@ -25,10 +26,14 @@ func GetForwardStats(c *gin.Context) {
 		api.RespondError(c, http.StatusNotFound, err.Error())
 		return
 	}
+	instanceStats, _ := forward.ListForwardInstanceStatsByRule(id)
 	stats, err := dbforward.GetForwardStats(id)
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(stats) == 0 && len(instanceStats) > 0 {
+		stats = aggregateNodeStatsFromInstanceStats(id, instanceStats)
 	}
 
 	var rc forward.RuleConfig
@@ -47,33 +52,76 @@ func GetForwardStats(c *gin.Context) {
 	history, _ := forward.GetRecentTrafficHistory(id, historyNodeID, 300)
 
 	resp := gin.H{
-		"rule":           rule,
-		"stats":          stats,
-		"history":        history,
-		"entry_status":   entryStat,
+		"rule":              rule,
+		"stats":             stats,
+		"instance_stats":    instanceStats,
+		"history":           history,
+		"entry_status":      entryStat,
 		"total_connections": rule.TotalConnections,
-		"total_traffic_in":   rule.TotalTrafficIn,
-		"total_traffic_out":  rule.TotalTrafficOut,
+		"total_traffic_in":  rule.TotalTrafficIn,
+		"total_traffic_out": rule.TotalTrafficOut,
 	}
 	api.RespondSuccess(c, resp)
 }
 
+type realmInstanceStatsSummary struct {
+	TotalInboundBytes  int64 `json:"total_inbound_bytes"`
+	TotalOutboundBytes int64 `json:"total_outbound_bytes"`
+	CurrentConnections int   `json:"current_connections"`
+}
+
+func aggregateNodeStatsFromInstanceStats(ruleID uint, instanceStats []forward.ForwardInstanceStats) []models.ForwardStat {
+	now := time.Now().UTC()
+	nodeMap := map[string]*models.ForwardStat{}
+	for _, st := range instanceStats {
+		if st.RuleID != ruleID || st.NodeID == "" {
+			continue
+		}
+		sum := realmInstanceStatsSummary{}
+		_ = json.Unmarshal(st.Stats, &sum)
+		ns := nodeMap[st.NodeID]
+		if ns == nil {
+			ns = &models.ForwardStat{
+				RuleID: ruleID,
+				NodeID: st.NodeID,
+			}
+			nodeMap[st.NodeID] = ns
+		}
+		ns.ActiveConnections += sum.CurrentConnections
+		ns.TrafficInBytes += sum.TotalInboundBytes
+		ns.TrafficOutBytes += sum.TotalOutboundBytes
+		if !st.LastUpdatedAt.IsZero() && now.Sub(st.LastUpdatedAt) <= 60*time.Second {
+			if ns.LinkStatus == "" {
+				ns.LinkStatus = "healthy"
+			}
+		}
+	}
+	out := make([]models.ForwardStat, 0, len(nodeMap))
+	for _, v := range nodeMap {
+		if v.LinkStatus == "" {
+			v.LinkStatus = "faulty"
+		}
+		out = append(out, *v)
+	}
+	return out
+}
+
 type topologyNode struct {
-	NodeID   string `json:"node_id"`
-	Name     string `json:"name"`
-	IP       string `json:"ip"`
-	Port     int    `json:"port,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Latency  int64  `json:"latency_ms,omitempty"`
-	Role     string `json:"role"`
+	NodeID  string `json:"node_id"`
+	Name    string `json:"name"`
+	IP      string `json:"ip"`
+	Port    int    `json:"port,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Latency int64  `json:"latency_ms,omitempty"`
+	Role    string `json:"role"`
 }
 
 type topologyHop struct {
-	Type             string         `json:"type"`
-	Strategy         string         `json:"strategy,omitempty"`
-	Node             *topologyNode  `json:"node,omitempty"`
-	Relays           []topologyNode `json:"relays,omitempty"`
-	ActiveRelayNode  string         `json:"active_relay_node_id,omitempty"`
+	Type            string         `json:"type"`
+	Strategy        string         `json:"strategy,omitempty"`
+	Node            *topologyNode  `json:"node,omitempty"`
+	Relays          []topologyNode `json:"relays,omitempty"`
+	ActiveRelayNode string         `json:"active_relay_node_id,omitempty"`
 }
 
 // GetForwardTopology 获取拓扑展示数据
@@ -107,7 +155,7 @@ func GetForwardTopology(c *gin.Context) {
 			relays = append(relays, buildTopologyNode(r.NodeID, r.CurrentPort, r.Port, "relay", statMap))
 		}
 	case "chain":
-		for _, hop := range rc.Hops {
+		for _, hop := range forward.SortHops(rc.Hops) {
 			if strings.ToLower(hop.Type) == "direct" {
 				node := buildTopologyNode(hop.NodeID, hop.CurrentPort, hop.Port, "hop", statMap)
 				hops = append(hops, topologyHop{Type: hop.Type, Node: &node})

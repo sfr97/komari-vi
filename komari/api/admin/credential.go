@@ -38,12 +38,12 @@ func ListCredentials(c *gin.Context) {
 
 func CreateCredential(c *gin.Context) {
 	var req struct {
-		Name     string                `json:"name" binding:"required"`
-		Username string                `json:"username" binding:"required"`
-		Type     models.CredentialType `json:"type" binding:"required"`
-		Secret   string                `json:"secret" binding:"required"`
-		Passphrase string              `json:"passphrase"`
-		Remark   string                `json:"remark"`
+		Name       string                `json:"name" binding:"required"`
+		Username   string                `json:"username" binding:"required"`
+		Type       models.CredentialType `json:"type" binding:"required"`
+		Secret     string                `json:"secret" binding:"required"`
+		Passphrase string                `json:"passphrase"`
+		Remark     string                `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		api.RespondError(c, http.StatusBadRequest, "请求格式错误: "+err.Error())
@@ -66,12 +66,12 @@ func UpdateCredential(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name     *string                `json:"name"`
-		Username *string                `json:"username"`
-		Type     *models.CredentialType `json:"type"`
-		Secret   *string                `json:"secret"`
-		Passphrase *string              `json:"passphrase"`
-		Remark   *string                `json:"remark"`
+		Name       *string                `json:"name"`
+		Username   *string                `json:"username"`
+		Type       *models.CredentialType `json:"type"`
+		Secret     *string                `json:"secret"`
+		Passphrase *string                `json:"passphrase"`
+		Remark     *string                `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		api.RespondError(c, http.StatusBadRequest, "请求格式错误: "+err.Error())

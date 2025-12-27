@@ -1,0 +1,44 @@
+name: CI Realm
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - "realm/**"
+      - ".github/workflows/ci-realm.yml"
+  pull_request:
+    branches: [ master ]
+    paths:
+      - "realm/**"
+      - ".github/workflows/ci-realm.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy
+      - name: cargo clippy
+        working-directory: realm
+        run: cargo clippy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: test core
+        working-directory: realm
+        run: cargo test -p realm_core -v --no-fail-fast --features proxy
+      - name: test binary
+        working-directory: realm
+        run: cargo test -v --no-fail-fast
+

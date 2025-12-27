@@ -33,9 +33,9 @@ func AddTrafficHistory(entry *models.ForwardTrafficHistory) error {
 			{Name: "timestamp"},
 		},
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"connections":      entry.Connections,
-			"avg_latency_ms":   entry.AvgLatencyMs,
-			"traffic_in_bytes": gorm.Expr("traffic_in_bytes + ?", entry.TrafficInBytes),
+			"connections":       entry.Connections,
+			"avg_latency_ms":    entry.AvgLatencyMs,
+			"traffic_in_bytes":  gorm.Expr("traffic_in_bytes + ?", entry.TrafficInBytes),
 			"traffic_out_bytes": gorm.Expr("traffic_out_bytes + ?", entry.TrafficOutBytes),
 		}),
 	}).Create(entry).Error

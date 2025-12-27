@@ -31,7 +31,7 @@ type RelayForm = {
 
 type HopForm =
 	| { id: string; type: 'direct'; node_id: string; port: string; current_port?: number; sort_order?: number }
-	| { id: string; type: 'relay_group'; relays: RelayForm[]; strategy: string; active_relay_node_id?: string }
+	| { id: string; type: 'relay_group'; relays: RelayForm[]; strategy: string; active_relay_node_id?: string; network?: NetworkConfig }
 
 type StructuredConfig = {
 	entry_node_id: string
@@ -45,6 +45,7 @@ type StructuredConfig = {
 	relays: RelayForm[]
 	strategy: string
 	active_relay_node_id?: string
+	network?: NetworkConfig
 	hops: HopForm[]
 }
 
@@ -57,6 +58,53 @@ type Props = {
 
 const uid = () => crypto?.randomUUID?.() || `hop-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+type NetworkConfig = Partial<{
+	failover_probe_interval_ms: number
+	failover_probe_timeout_ms: number
+	failover_failfast_timeout_ms: number
+	failover_ok_ttl_ms: number
+	failover_backoff_base_ms: number
+	failover_backoff_max_ms: number
+	failover_retry_window_ms: number
+	failover_retry_sleep_ms: number
+}>
+
+const normalizeStrategy = (strategy?: string) => {
+	const s = (strategy || '').toLowerCase().trim()
+	if (!s) return ''
+	if (s === 'priority') return 'failover'
+	if (['roundrobin', 'iphash', 'failover'].includes(s)) return s
+	return 'failover'
+}
+
+const normalizeNetwork = (network: any): NetworkConfig | undefined => {
+	if (!network || typeof network !== 'object') return undefined
+	const toNumber = (v: any): number | undefined => {
+		if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v >= 0) return v
+		if (typeof v === 'string' && v.trim() !== '') {
+			const n = Number(v)
+			if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) return n
+		}
+		return undefined
+	}
+	const keys = [
+		'failover_probe_interval_ms',
+		'failover_probe_timeout_ms',
+		'failover_failfast_timeout_ms',
+		'failover_ok_ttl_ms',
+		'failover_backoff_base_ms',
+		'failover_backoff_max_ms',
+		'failover_retry_window_ms',
+		'failover_retry_sleep_ms'
+	] as const
+	const out: Record<string, number> = {}
+	for (const k of keys) {
+		const n = toNumber((network as any)[k])
+		if (n !== undefined) out[k] = n
+	}
+	return Object.keys(out).length ? (out as NetworkConfig) : undefined
+}
+
 const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 	const { t } = useTranslation()
 	const { nodeDetail } = useNodeDetails()
@@ -65,11 +113,6 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 	const [saving, setSaving] = useState(false)
 	const [checkingPort, setCheckingPort] = useState(false)
 	const [alertConfig, setAlertConfig] = useState<AlertConfig>(defaultAlertConfig)
-	const [manualRealmEdit, setManualRealmEdit] = useState(false)
-	const [realmNode, setRealmNode] = useState('')
-	const [realmConfigs, setRealmConfigs] = useState<Record<string, string>>({})
-	const [previewConfigs, setPreviewConfigs] = useState<Record<string, string>>({})
-	const [previewLoading, setPreviewLoading] = useState(false)
 	const [testOpen, setTestOpen] = useState(false)
 	const [testConfig, setTestConfig] = useState('')
 	const [portChecks, setPortChecks] = useState<Record<string, { status: 'checking' | 'ok' | 'fail'; message?: string; port?: number }>>({})
@@ -77,7 +120,7 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 	const [structured, setStructured] = useState<StructuredConfig>({
 		entry_node_id: '', entry_port: '', protocol: 'both', target_type: 'custom',
 		target_node_id: '', target_host: '', target_port: '', relays: [],
-		strategy: 'priority', active_relay_node_id: '', hops: []
+		strategy: 'failover', active_relay_node_id: '', hops: []
 	})
 
 	const linuxFilter = (node: NodeDetail) => (node.os || '').toLowerCase().includes('linux')
@@ -116,8 +159,9 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 					node_id: r.node_id || '', port: r.port || '',
 					sort_order: r.sort_order ?? idx + 1, current_port: r.current_port || 0
 				})),
-				strategy: parsed.strategy || 'priority',
+				strategy: normalizeStrategy(parsed.strategy) || 'failover',
 				active_relay_node_id: parsed.active_relay_node_id || '',
+				network: normalizeNetwork(parsed.network),
 				hops: (parsed.hops || []).map((h: any, idx: number) =>
 					h.type === 'relay_group'
 						? { id: `hop-${idx}`, type: 'relay_group' as const,
@@ -125,24 +169,17 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 								node_id: r.node_id || '', port: r.port || '',
 								sort_order: r.sort_order ?? ridx + 1, current_port: r.current_port || 0
 							})),
-							strategy: h.strategy || 'priority', active_relay_node_id: h.active_relay_node_id || '' }
+							strategy: normalizeStrategy(h.strategy) || 'failover',
+							active_relay_node_id: h.active_relay_node_id || '',
+							network: normalizeNetwork(h.network)
+						}
 						: { id: `hop-${idx}`, type: 'direct' as const, node_id: h.node_id || '',
 							port: h.port || '', current_port: h.current_port || 0, sort_order: h.sort_order || idx + 1 }
 				)
 			}
 			setStructured(cfg)
-			const manualMap: Record<string, string> = {}
-			if (parsed.entry_node_id && parsed.entry_realm_config) manualMap[parsed.entry_node_id] = parsed.entry_realm_config
-			parsed.relays?.forEach((r: any) => r?.node_id && r?.realm_config && (manualMap[r.node_id] = r.realm_config))
-			parsed.hops?.forEach((hop: any) => {
-				if (hop?.type === 'direct' && hop?.node_id && hop?.realm_config) manualMap[hop.node_id] = hop.realm_config
-				if (hop?.type === 'relay_group') hop.relays?.forEach((r: any) => r?.node_id && r?.realm_config && (manualMap[r.node_id] = r.realm_config))
-			})
-			setRealmConfigs(manualMap)
-			setManualRealmEdit(Object.values(manualMap).some(val => (val || '').trim().length > 0))
 		} catch {
-			setManualRealmEdit(false)
-			setRealmConfigs({})
+			// ignore parse failures; keep defaults
 		}
 	}, [initial])
 
@@ -177,8 +214,8 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 			...prev,
 			relays: form.type === 'relay_group' ? prev.relays : [],
 			hops: form.type === 'chain' ? prev.hops : [],
-			strategy: form.type === 'relay_group' ? prev.strategy : prev.strategy || 'priority',
-			active_relay_node_id: form.type === 'relay_group' ? prev.active_relay_node_id : ''
+			strategy: normalizeStrategy(prev.strategy) || 'failover',
+			active_relay_node_id: ''
 		}))
 	}, [form.type])
 
@@ -188,59 +225,34 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 		return map
 	}, [nodeDetail])
 
-	const realmNodes = useMemo(() => {
-		const items: { id: string; label: string }[] = []
-		const seen = new Set<string>()
-		const push = (id: string, prefix: string) => {
-			if (!id || seen.has(id)) return
-			seen.add(id)
-			items.push({ id, label: `${prefix}: ${nodeMap[id] || id}` })
-		}
-		if (structured.entry_node_id) push(structured.entry_node_id, t('forward.entry'))
-		structured.relays?.forEach(r => push(r.node_id, t('forward.relayNodes')))
-		structured.hops?.forEach(hop => {
-			if (hop.type === 'direct') push(hop.node_id, t('forward.directHop'))
-			else if (hop.type === 'relay_group') hop.relays?.forEach(r => push(r.node_id, t('forward.relayGroup')))
-		})
-		return items
-	}, [structured, nodeMap, t])
-
-	useEffect(() => {
-		if (!realmNodes.length) { setRealmNode(''); return }
-		if (!realmNodes.some(n => n.id === realmNode)) setRealmNode(realmNodes[0].id)
-	}, [realmNodes, realmNode])
-
-	useEffect(() => {
-		setRealmConfigs(prev => {
-			if (!realmNodes.length) return prev
-			const allow = new Set(realmNodes.map(n => n.id))
-			return Object.fromEntries(Object.entries(prev).filter(([k]) => allow.has(k)))
-		})
-	}, [realmNodes])
-
-	const buildConfigPayload = (includeManual: boolean) => {
-		const realmFor = (nodeId: string) => (includeManual ? realmConfigs[nodeId] || '' : '')
+	const buildConfigPayload = () => {
 		return {
 			entry_node_id: structured.entry_node_id, entry_port: structured.entry_port,
 			entry_current_port: structured.entry_current_port || 0,
-			entry_realm_config: realmFor(structured.entry_node_id), protocol: structured.protocol,
+			protocol: structured.protocol,
 			target_type: structured.target_type,
 			target_node_id: structured.target_type === 'node' ? structured.target_node_id : null,
 			target_host: structured.target_type === 'custom' ? structured.target_host : null,
 			target_port: Number(structured.target_port) || 0,
 			relays: structured.relays.map((r, idx) => ({
 				node_id: r.node_id, port: r.port, current_port: r.current_port || 0,
-				realm_config: realmFor(r.node_id), sort_order: r.sort_order || idx + 1
+				sort_order: r.sort_order || idx + 1
 			})),
-			strategy: structured.strategy, active_relay_node_id: structured.active_relay_node_id || '',
+			strategy: normalizeStrategy(structured.strategy) || 'failover', active_relay_node_id: structured.active_relay_node_id || '',
+			network: normalizeNetwork(structured.network),
 			hops: structured.hops.map((h, idx) =>
 				h.type === 'relay_group'
 					? { type: 'relay_group', relays: h.relays.map((r, ridx) => ({
 							node_id: r.node_id, port: r.port, current_port: r.current_port || 0,
-							realm_config: realmFor(r.node_id), sort_order: r.sort_order || ridx + 1
-						})), strategy: h.strategy || 'priority', active_relay_node_id: h.active_relay_node_id || '', sort_order: idx + 1 }
+							sort_order: r.sort_order || ridx + 1
+						})),
+						strategy: normalizeStrategy(h.strategy) || 'failover',
+						active_relay_node_id: h.active_relay_node_id || '',
+						network: normalizeNetwork(h.network),
+						sort_order: idx + 1
+					}
 					: { type: 'direct', node_id: h.node_id, port: h.port, current_port: h.current_port || 0,
-						realm_config: realmFor(h.node_id), sort_order: h.sort_order || idx + 1 }
+						sort_order: h.sort_order || idx + 1 }
 			),
 			type: form.type
 		}
@@ -250,14 +262,14 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 		setSaving(true)
 		try {
 			if (!validateStructured(form.type, structured, t)) return
-			const cfg = buildConfigPayload(manualRealmEdit)
+			const cfg = buildConfigPayload()
 			await onSubmit({ ...form, config_json: JSON.stringify(cfg, null, 2) })
 			if (form.id) await saveAlertConfig(form.id)
 		} finally { setSaving(false) }
 	}
 
 	const openTestConnectivity = () => {
-		const config = JSON.stringify(buildConfigPayload(manualRealmEdit))
+		const config = JSON.stringify(buildConfigPayload())
 		if (!config) {
 			toast.error(t('forward.config', { defaultValue: '配置' }) + ' ' + t('common.required', { defaultValue: '必填' }))
 			return
@@ -267,34 +279,10 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 	}
 
 	const generatedPreview = useMemo(
-		() => JSON.stringify(buildConfigPayload(manualRealmEdit), null, 2),
-		[structured, manualRealmEdit, realmConfigs, form.type]
+		() => JSON.stringify(buildConfigPayload(), null, 2),
+		[structured, form.type]
 	)
-	const previewConfigJSON = useMemo(() => JSON.stringify(buildConfigPayload(false), null, 2), [structured, form.type])
-
-	useEffect(() => {
-		if (manualRealmEdit) return
-		if (!structured.entry_node_id || !structured.entry_port) return
-		let cancelled = false
-		const timer = setTimeout(async () => {
-			setPreviewLoading(true)
-			try {
-				const res = await fetch('/api/v1/forwards/preview-config', {
-					method: 'POST', headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ type: form.type, config_json: previewConfigJSON })
-				})
-				if (!res.ok) throw new Error(`HTTP ${res.status}`)
-				const body = await res.json()
-				if (!cancelled) setPreviewConfigs(body.data?.node_configs || {})
-			} catch (e: any) {
-				if (!cancelled) { setPreviewConfigs({}); toast.error(e?.message || 'Preview failed') }
-			} finally { if (!cancelled) setPreviewLoading(false) }
-		}, 300)
-		return () => { cancelled = true; clearTimeout(timer) }
-	}, [manualRealmEdit, form.type, previewConfigJSON])
-
-	const formDisabled = manualRealmEdit
-	const activeRealmConfig = manualRealmEdit ? realmConfigs[realmNode] || '' : previewConfigs[realmNode] || ''
+	const formDisabled = saving
 
 	const updateHop = (id: string, updater: (hop: HopForm) => HopForm) => {
 		setStructured(prev => ({ ...prev, hops: prev.hops.map(h => h.id === id ? updater(h) : h) }))
@@ -381,7 +369,7 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 			path: t('forward.relayPath', { defaultValue: '入口 → 中继组 → 目标' }),
 			description: t('forward.relayDesc', { defaultValue: '通过中继节点组转发流量，支持多种负载均衡策略。适合需要优化线路、提升稳定性或隐藏真实目标的场景。' }),
 			features: [
-				t('forward.relayFeature1', { defaultValue: '支持优先级、轮询、随机、IP Hash 策略' }),
+				t('forward.relayFeature1', { defaultValue: '支持故障转移、轮询、IP Hash 策略' }),
 				t('forward.relayFeature2', { defaultValue: '中继故障时自动切换备用节点' })
 			]
 		},
@@ -679,7 +667,7 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 																</div>
 																<div>
 																	<div className="timeline-title">{t('forward.relayConfig', { defaultValue: '中继节点' })}</div>
-																	<div className="timeline-subtitle">{t('forward.relayConfigSub', { defaultValue: '批量选择中继节点，并为每个节点设置端口与权重/优先级' })}</div>
+																	<div className="timeline-subtitle">{t('forward.relayConfigSub', { defaultValue: '批量选择中继节点，并为每个节点设置端口与顺序/权重' })}</div>
 																</div>
 															</div>
 														</div>
@@ -702,12 +690,18 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 																	orientation="vertical"
 																	className="flex flex-wrap flex-row! gap-5!"
 																	disabled={formDisabled}>
-																	<RadioGroup.Item value="priority">{t('forward.strategyPriority', { defaultValue: '优先级' })}</RadioGroup.Item>
+																	<RadioGroup.Item value="failover">{t('forward.strategyFailover', { defaultValue: '故障转移' })}</RadioGroup.Item>
 																	<RadioGroup.Item value="roundrobin">{t('forward.strategyRoundRobin', { defaultValue: '轮询' })}</RadioGroup.Item>
-																	<RadioGroup.Item value="random">{t('forward.strategyRandom', { defaultValue: '随机' })}</RadioGroup.Item>
 																	<RadioGroup.Item value="iphash">{t('forward.strategyIPHash', { defaultValue: 'IP Hash' })}</RadioGroup.Item>
 																</RadioGroup.Root>
 															</FieldGroup>
+															{(structured.strategy || '').toLowerCase() === 'failover' && (
+																<FailoverNetworkEditor
+																	value={structured.network}
+																	onChange={net => setStructured(p => ({ ...p, network: net }))}
+																	disabled={formDisabled}
+																/>
+															)}
 														</div>
 													</div>
 												</div>
@@ -746,16 +740,16 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 																			onClick={() => setStructured(p => ({ ...p, hops: [...p.hops, { id: uid(), type: 'direct', node_id: '', port: '', current_port: 0 }] }))}>
 																			<Plus size={14} /> {t('forward.addDirectHop', { defaultValue: '新增直连跳点' })}
 																		</Button>
-																		<Button
-																			size="2"
-																			variant="soft"
-																			disabled={formDisabled}
-																			onClick={() => setStructured(p => ({ ...p, hops: [...p.hops, { id: uid(), type: 'relay_group', relays: [], strategy: 'priority', active_relay_node_id: '' }] }))}>
-																			<Plus size={14} /> {t('forward.addRelayHop', { defaultValue: '新增中继组跳点' })}
-																		</Button>
-																	</Flex>
+																			<Button
+																				size="2"
+																				variant="soft"
+																				disabled={formDisabled}
+																				onClick={() => setStructured(p => ({ ...p, hops: [...p.hops, { id: uid(), type: 'relay_group', relays: [], strategy: 'failover', active_relay_node_id: '' }] }))}>
+																				<Plus size={14} /> {t('forward.addRelayHop', { defaultValue: '新增中继组跳点' })}
+																			</Button>
+																		</Flex>
+																	</div>
 																</div>
-															</div>
 														</div>
 													) : (
 														<>
@@ -860,12 +854,18 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 																							orientation="vertical"
 																							className="flex flex-wrap flex-row! gap-5!"
 																							disabled={formDisabled}>
-																							<RadioGroup.Item value="priority">{t('forward.strategyPriority', { defaultValue: '优先级' })}</RadioGroup.Item>
+																							<RadioGroup.Item value="failover">{t('forward.strategyFailover', { defaultValue: '故障转移' })}</RadioGroup.Item>
 																							<RadioGroup.Item value="roundrobin">{t('forward.strategyRoundRobin', { defaultValue: '轮询' })}</RadioGroup.Item>
-																							<RadioGroup.Item value="random">{t('forward.strategyRandom', { defaultValue: '随机' })}</RadioGroup.Item>
 																							<RadioGroup.Item value="iphash">{t('forward.strategyIPHash', { defaultValue: 'IP Hash' })}</RadioGroup.Item>
 																						</RadioGroup.Root>
 																					</FieldGroup>
+																					{(hop.strategy || '').toLowerCase() === 'failover' && (
+																						<FailoverNetworkEditor
+																							value={hop.network}
+																							onChange={net => updateHop(hop.id, h => ({ ...h, network: net } as any))}
+																							disabled={formDisabled}
+																						/>
+																					)}
 																				</div>
 																			)}
 																		</div>
@@ -884,7 +884,7 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 																	size="1"
 																	variant="soft"
 																	disabled={formDisabled}
-																	onClick={() => setStructured(p => ({ ...p, hops: [...p.hops, { id: uid(), type: 'relay_group', relays: [], strategy: 'priority', active_relay_node_id: '' }] }))}>
+																	onClick={() => setStructured(p => ({ ...p, hops: [...p.hops, { id: uid(), type: 'relay_group', relays: [], strategy: 'failover', active_relay_node_id: '' }] }))}>
 																	<Plus size={14} /> {t('forward.addRelayHop', { defaultValue: '新增中继组' })}
 																</Button>
 															</Flex>
@@ -923,64 +923,8 @@ const RuleFormDrawer = ({ open, initial, onClose, onSubmit }: Props) => {
 												</div>
 											</div>
 										</div>
-									</div>
 								</div>
-
-								{/* Realm 配置 */}
-								<div className="route-card">
-										<div className="route-card-header">
-											<div>
-												<div className="route-card-title">{t('forward.realmConfig', { defaultValue: 'Realm 配置' })}</div>
-												<div className="route-card-subtitle">{t('forward.realmConfigSub', { defaultValue: '为入口/中继/跳点生成或手动编辑 realm 模板。' })}</div>
-											</div>
-											<Flex align="center" gap="3">
-												{previewLoading && !manualRealmEdit && (
-													<Text size="1" color="gray">{t('forward.previewLoading', { defaultValue: '正在生成预览…' })}</Text>
-												)}
-												<Flex align="center" gap="2" className="px-2 py-1 rounded-md bg-[var(--gray-2)] border">
-													<Switch size="1" checked={manualRealmEdit} onCheckedChange={v => setManualRealmEdit(Boolean(v))} disabled={!realmNodes.length} />
-													<Text size="2" color={manualRealmEdit ? 'amber' : 'gray'}>
-														{manualRealmEdit ? t('forward.manualMode', { defaultValue: '手动' }) : t('forward.autoMode', { defaultValue: '自动' })}
-													</Text>
-												</Flex>
-											</Flex>
-										</div>
-										<div className="route-card-body space-y-3">
-											<div className="grid grid-cols-12 gap-3">
-												<div className="col-span-12 md:col-span-6">
-													<FieldGroup label={t('forward.selectNode', { defaultValue: '选择节点' })}>
-														<Select.Root size="2" value={realmNode} onValueChange={setRealmNode} disabled={!realmNodes.length}>
-															<Select.Trigger className="w-full" />
-															<Select.Content position="popper">
-																{realmNodes.map(n => <Select.Item key={n.id} value={n.id}>{n.label}</Select.Item>)}
-															</Select.Content>
-														</Select.Root>
-													</FieldGroup>
-												</div>
-												<div className="col-span-12 md:col-span-6">
-													<FieldGroup
-														label={t('forward.realmModeHintTitle', { defaultValue: '说明' })}
-														hint={manualRealmEdit
-															? t('forward.manualRealmHint', { defaultValue: '手动模式下只保存你填写的内容；将会覆盖自动生成结果。' })
-															: t('forward.autoRealmHint', { defaultValue: '自动模式将根据当前路由配置生成预览，保存后生效。' })}>
-														<div className="h-[34px] flex items-center text-sm text-gray-11">
-															{manualRealmEdit
-																? t('forward.manualEditing', { defaultValue: '当前为手动编辑' })
-																: t('forward.autoPreviewing', { defaultValue: '当前为自动预览' })}
-														</div>
-													</FieldGroup>
-												</div>
-											</div>
-											<TextArea
-												rows={10}
-												value={activeRealmConfig}
-												readOnly={!manualRealmEdit || !realmNode}
-												onChange={e => realmNode && setRealmConfigs(p => ({ ...p, [realmNode]: e.target.value }))}
-												placeholder={t('forward.realmConfigPlaceholder', { defaultValue: '# realm config (TOML)' })}
-												className="font-mono text-xs leading-5 bg-[var(--gray-1)]"
-											/>
-										</div>
-								</div>
+							</div>
 
 								<div className="route-card">
 									<div className="route-card-header">
@@ -1142,13 +1086,66 @@ const TargetSelector = ({ structured, setStructured, disabled, filterNode, exclu
 	)
 }
 
-	const RelayEditor = ({ relays, strategy, onChange, disabled, filterNode, excludeFor, schedulePortCheck, renderPortStatus, checkPort }: {
-		relays: RelayForm[]; strategy?: string; onChange: (r: RelayForm[]) => void
-		disabled?: boolean; filterNode?: (node: NodeDetail) => boolean; excludeFor?: (current: string[]) => string[]
-		schedulePortCheck?: (key: string, nodeId: string, portSpec: string) => void
-		renderPortStatus?: (key: string) => ReactNode
-		checkPort?: (nodeId: string, portSpec: string, onOk: (val: number) => void) => void
-	}) => {
+const FailoverNetworkEditor = ({ value, onChange, disabled }: { value?: NetworkConfig; onChange: (v?: NetworkConfig) => void; disabled?: boolean }) => {
+	const { t } = useTranslation()
+	const setField = (key: keyof NetworkConfig, raw: string) => {
+		const trimmed = raw.trim()
+		const next: any = { ...(value || {}) }
+		if (trimmed === '') {
+			delete next[key]
+		} else {
+			const n = Number(trimmed)
+			if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) next[key] = n
+		}
+		onChange(Object.keys(next).length ? (next as NetworkConfig) : undefined)
+	}
+	const getVal = (key: keyof NetworkConfig) => {
+		const v = (value as any)?.[key]
+		return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
+	}
+
+	const fields: { key: keyof NetworkConfig; label: string }[] = [
+		{ key: 'failover_probe_interval_ms', label: t('forward.failoverProbeInterval', { defaultValue: '探测间隔(ms)' }) },
+		{ key: 'failover_probe_timeout_ms', label: t('forward.failoverProbeTimeout', { defaultValue: '探测超时(ms)' }) },
+		{ key: 'failover_failfast_timeout_ms', label: t('forward.failoverFailfastTimeout', { defaultValue: 'Failfast 超时(ms)' }) },
+		{ key: 'failover_ok_ttl_ms', label: t('forward.failoverOkTTL', { defaultValue: 'OK TTL(ms)' }) },
+		{ key: 'failover_backoff_base_ms', label: t('forward.failoverBackoffBase', { defaultValue: '退避基准(ms)' }) },
+		{ key: 'failover_backoff_max_ms', label: t('forward.failoverBackoffMax', { defaultValue: '退避上限(ms)' }) },
+		{ key: 'failover_retry_window_ms', label: t('forward.failoverRetryWindow', { defaultValue: '重试窗口(ms)' }) },
+		{ key: 'failover_retry_sleep_ms', label: t('forward.failoverRetrySleep', { defaultValue: '重试睡眠(ms)' }) }
+	]
+
+	return (
+		<div className="mt-2 p-3 rounded-lg bg-slate-50 ring-1 ring-black/5">
+			<Text size="2" weight="bold" className="mb-2 block">
+				{t('forward.failoverParams', { defaultValue: 'Failover 参数' })}
+			</Text>
+			<div className="grid grid-cols-12 gap-2">
+				{fields.map(f => (
+					<div key={String(f.key)} className="col-span-12 md:col-span-6">
+						<FieldGroup label={f.label}>
+							<TextField.Root
+								size="2"
+								value={getVal(f.key)}
+								onChange={e => setField(f.key, e.target.value)}
+								placeholder="(可选)"
+								disabled={disabled}
+							/>
+						</FieldGroup>
+					</div>
+				))}
+			</div>
+		</div>
+	)
+}
+
+const RelayEditor = ({ relays, strategy, onChange, disabled, filterNode, excludeFor, schedulePortCheck, renderPortStatus, checkPort }: {
+	relays: RelayForm[]; strategy?: string; onChange: (r: RelayForm[]) => void
+	disabled?: boolean; filterNode?: (node: NodeDetail) => boolean; excludeFor?: (current: string[]) => string[]
+	schedulePortCheck?: (key: string, nodeId: string, portSpec: string) => void
+	renderPortStatus?: (key: string) => ReactNode
+	checkPort?: (nodeId: string, portSpec: string, onOk: (val: number) => void) => void
+}) => {
 	const { t } = useTranslation()
 	const addRelays = (ids: string[]) => {
 		if (!ids?.length) return
@@ -1158,7 +1155,7 @@ const TargetSelector = ({ structured, setStructured, disabled, filterNode, exclu
 		onChange([...relays, ...filtered.map((id, idx) => ({ node_id: id, port: '', sort_order: relays.length + idx + 1 }))])
 	}
 
-	const priorityMode = strategy === 'priority'
+	const useWeight = (strategy || '').toLowerCase() === 'roundrobin'
 
 	return (
 		<div className="space-y-3">
@@ -1186,7 +1183,7 @@ const TargetSelector = ({ structured, setStructured, disabled, filterNode, exclu
                                 <div className="absolute right-1.5 top-1/2 -translate-y-1/2">{renderPortStatus?.(`relay-${idx}`)}</div>
                             </div>
                             <Flex align="center" gap="2" className="w-40">
-                                <Text size="1" className="text-gray-10 whitespace-nowrap">{priorityMode ? t('forward.priority', { defaultValue: '优先级' }) : t('forward.weight', { defaultValue: '权重' })}</Text>
+                                <Text size="1" className="text-gray-10 whitespace-nowrap">{useWeight ? t('forward.weight', { defaultValue: '权重' }) : t('forward.order', { defaultValue: '顺序' })}</Text>
                                 <TextField.Root size="1" type="number" min={1} value={r.sort_order} onChange={e => onChange(relays.map((x, i) => i === idx ? { ...x, sort_order: Number(e.target.value) || 1 } : x))} disabled={disabled} />
                             </Flex>
 	                            <Button size="1" variant="soft" onClick={() => checkPort?.(r.node_id, r.port, () => {})} disabled={disabled || false}>{t('forward.checkPortNow', { defaultValue: '检查' })}</Button>
@@ -1200,22 +1197,6 @@ const TargetSelector = ({ structured, setStructured, disabled, filterNode, exclu
 }
 
 const validateStructured = (type: string, cfg: StructuredConfig, t: any) => {
-	const checkDuplicates = () => {
-		const ids: string[] = []
-		if (cfg.entry_node_id) ids.push(cfg.entry_node_id)
-		if (cfg.target_type === 'node' && cfg.target_node_id) ids.push(cfg.target_node_id)
-		cfg.relays?.forEach(r => r.node_id && ids.push(r.node_id))
-		cfg.hops?.forEach(hop => {
-			if (hop.type === 'direct' && hop.node_id) ids.push(hop.node_id)
-			if (hop.type === 'relay_group') hop.relays?.forEach(r => r.node_id && ids.push(r.node_id))
-		})
-		const seen = new Set<string>()
-		for (const id of ids) {
-			if (seen.has(id)) { toast.error(t('forward.duplicateNode', { defaultValue: '节点不可重复使用' })); return false }
-			seen.add(id)
-		}
-		return true
-	}
 	if (!cfg.entry_node_id) { toast.error(t('forward.entry') + ' ' + (t('common.required') || 'required')); return false }
 	if (!cfg.entry_port) { toast.error(t('forward.entryPort') + ' ' + (t('common.required') || 'required')); return false }
 	const checkTarget = () => {
@@ -1226,11 +1207,11 @@ const validateStructured = (type: string, cfg: StructuredConfig, t: any) => {
 		}
 		return true
 	}
-	if (type === 'direct') return checkTarget() && checkDuplicates()
+	if (type === 'direct') return checkTarget()
 	if (type === 'relay_group') {
 		if (!cfg.relays?.length) { toast.error(t('forward.relayNodes') + ' ' + (t('common.required') || 'required')); return false }
 		for (const r of cfg.relays) if (!r.node_id || !r.port) { toast.error(t('forward.relayNodes') + ' ' + (t('common.required') || 'required')); return false }
-		return checkTarget() && checkDuplicates()
+		return checkTarget()
 	}
 	if (type === 'chain') {
 		if (!cfg.hops?.length) { toast.error(t('forward.addRelayHop')); return false }
@@ -1241,7 +1222,7 @@ const validateStructured = (type: string, cfg: StructuredConfig, t: any) => {
 				for (const r of hop.relays) if (!r.node_id || !r.port) { toast.error(t('forward.relayGroup') + ' ' + (t('common.required') || 'required')); return false }
 			}
 		}
-		return checkTarget() && checkDuplicates()
+		return checkTarget()
 	}
 	return true
 }

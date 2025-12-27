@@ -17,7 +17,6 @@ type Props = {
 	onToggleEnable: (id: number, nextEnabled: boolean) => void
 	onMonitor: (id: number) => void
 	onTest: (rule: ForwardRule) => void
-	onLogs: (rule: ForwardRule) => void
 	onDelete: (rule: ForwardRule) => void
 	onExport: (rule: ForwardRule) => void
 	draggable?: boolean
@@ -36,7 +35,6 @@ const RuleTable = ({
 	onToggleEnable,
 	onMonitor,
 	onTest,
-	onLogs,
 	onDelete,
 	onExport,
 	draggable = false,
@@ -151,8 +149,7 @@ const RuleTable = ({
 							: cfg?.target_host
 								? `${cfg?.target_host}:${formatPort(cfg?.target_port)}`
 								: '-'
-					const activeRelay =
-						cfg?.strategy === 'priority' && cfg?.active_relay_node_id ? nodeName(cfg.active_relay_node_id) : ''
+					const activeRelay = cfg?.active_relay_node_id ? nodeName(cfg.active_relay_node_id) : ''
 					return (
 						<Row
 							key={rule.id}
@@ -225,7 +222,6 @@ const RuleTable = ({
 										<DropdownMenu.Content>
 											<DropdownMenu.Item onSelect={() => onExport(rule)}>{t('forward.exportConfig')}</DropdownMenu.Item>
 											<DropdownMenu.Item onSelect={() => onTest(rule)}>{t('forward.testConnectivity')}</DropdownMenu.Item>
-											<DropdownMenu.Item onSelect={() => onLogs(rule)}>{t('forward.logs')}</DropdownMenu.Item>
 											<DropdownMenu.Separator />
 											<DropdownMenu.Item color="red" onSelect={() => onDelete(rule)}>
 												{t('forward.delete')}

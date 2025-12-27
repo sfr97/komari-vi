@@ -76,22 +76,3 @@ func UpdateSystemSettings(settings *models.ForwardSystemSettings) error {
 	settings.ID = 1
 	return dbcore.GetDBInstance().Save(settings).Error
 }
-
-// Realm config template
-func GetRealmConfigTemplate() (*models.RealmConfigTemplate, error) {
-	var tmpl models.RealmConfigTemplate
-	if err := dbcore.GetDBInstance().First(&tmpl, 1).Error; err != nil {
-		return nil, err
-	}
-	return &tmpl, nil
-}
-
-func UpdateRealmConfigTemplate(tmpl *models.RealmConfigTemplate) error {
-	if tmpl.ID == 0 {
-		tmpl.ID = 1
-	}
-	if tmpl.TemplateToml == "" {
-		return errors.New("template_toml is empty")
-	}
-	return dbcore.GetDBInstance().Save(tmpl).Error
-}

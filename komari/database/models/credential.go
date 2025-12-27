@@ -14,8 +14,8 @@ type Credential struct {
 	Type      CredentialType `json:"type" gorm:"type:varchar(20);not null"`
 	SecretEnc string         `json:"-" gorm:"type:longtext;not null"`
 	// PassphraseEnc 用于加密私钥口令（仅 type=key 时可用）
-	PassphraseEnc string `json:"-" gorm:"type:longtext;default:''"`
-	Remark    string         `json:"remark" gorm:"type:text;default:''"`
-	CreatedAt LocalTime      `json:"created_at"`
-	UpdatedAt LocalTime      `json:"updated_at"`
+	PassphraseEnc string    `json:"-" gorm:"type:longtext;default:''"`
+	Remark        string    `json:"remark" gorm:"type:text;default:''"`
+	CreatedAt     LocalTime `json:"created_at"`
+	UpdatedAt     LocalTime `json:"updated_at"`
 }

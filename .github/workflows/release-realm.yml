@@ -1,0 +1,205 @@
+name: Release Realm
+
+on:
+  push:
+    tags:
+      - "realm-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
+
+  release-cross:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - x86_64-pc-windows-gnu
+          - x86_64-linux-android
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+          - aarch64-linux-android
+          - arm-unknown-linux-gnueabi
+          - arm-unknown-linux-gnueabihf
+          - arm-unknown-linux-musleabi
+          - arm-unknown-linux-musleabihf
+          - armv7-unknown-linux-gnueabi
+          - armv7-unknown-linux-gnueabihf
+          - armv7-unknown-linux-musleabi
+          - armv7-unknown-linux-musleabihf
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Compile
+        working-directory: realm
+        run: cross build --release --target=${{ matrix.target }}
+
+      - name: Pack unix binary
+        if: ${{ !contains(matrix.target, 'windows') }}
+        working-directory: realm
+        run: |
+          mkdir -p release-${{ matrix.target }}
+          tar -C target/${{ matrix.target }}/release -zcf release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz realm
+
+      - name: Pack windows binary
+        if: ${{ contains(matrix.target, 'windows') }}
+        working-directory: realm
+        run: |
+          mkdir -p release-${{ matrix.target }}
+          tar -C target/${{ matrix.target }}/release -zcf release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz realm.exe
+
+      - name: Verify package exists
+        run: test -s "realm/release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: realm/release-${{ matrix.target }}/*
+
+  release-cross-mips:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - mips-unknown-linux-gnu
+          - mips-unknown-linux-musl
+          - mipsel-unknown-linux-gnu
+          - mipsel-unknown-linux-musl
+          - mips64-unknown-linux-gnuabi64
+          - mips64-unknown-linux-muslabi64
+          - mips64el-unknown-linux-gnuabi64
+          - mips64el-unknown-linux-muslabi64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Compile
+        working-directory: realm
+        run: RUSTFLAGS='-C target-feature=-crt-static' cross build --profile=release-thin --no-default-features --features default-ring --target=${{ matrix.target }}
+
+      - name: Pack unix-mips binary
+        working-directory: realm
+        run: |
+          mkdir -p release-${{ matrix.target }}
+          tar -C target/${{ matrix.target }}/release-thin -zcf release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz realm
+
+      - name: Verify package exists
+        run: test -s "realm/release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: realm/release-${{ matrix.target }}/*
+
+  release-windows:
+    needs: create-release
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: ${{ matrix.target }}
+
+      - name: Compile
+        working-directory: realm
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: Pack
+        working-directory: realm
+        shell: bash
+        run: |
+          mkdir -p release-${{ matrix.target }}
+          tar -C target/${{ matrix.target }}/release -zcf release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz realm.exe
+
+      - name: Verify package exists
+        shell: bash
+        run: test -s "realm/release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: realm/release-${{ matrix.target }}/*
+
+  release-apple:
+    needs: create-release
+    runs-on: macos-latest
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "17.5"
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - aarch64-apple-ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: ${{ matrix.target }}
+
+      - name: Compile
+        working-directory: realm
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: Pack
+        working-directory: realm
+        run: |
+          mkdir -p release-${{ matrix.target }}
+          tar -C target/${{ matrix.target }}/release -zcf release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz realm
+
+      - name: Verify package exists
+        run: test -s "realm/release-${{ matrix.target }}/realm-${{ matrix.target }}.tar.gz"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: realm/release-${{ matrix.target }}/*

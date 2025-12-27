@@ -16,7 +16,6 @@ func ForwardConfigSync(c *gin.Context) {
 	}
 	var payload struct {
 		NodeID            string                 `json:"node_id"`
-		RealmConfig       string                 `json:"realm_config"`
 		ConfigJSONUpdates map[string]interface{} `json:"config_json_updates"`
 		Reason            string                 `json:"reason"`
 	}
@@ -25,7 +24,7 @@ func ForwardConfigSync(c *gin.Context) {
 		return
 	}
 
-	if err := forward.ApplyConfigSync(id, payload.NodeID, payload.RealmConfig, payload.ConfigJSONUpdates, payload.Reason); err != nil {
+	if err := forward.ApplyConfigSync(id, payload.NodeID, payload.ConfigJSONUpdates, payload.Reason); err != nil {
 		RespondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}

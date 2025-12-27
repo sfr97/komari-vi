@@ -1,0 +1,20 @@
+{
+  "endpoints": [],
+  "instances": [
+    {
+      "id": "eb95744e-750f-42ab-907b-738a44b630f3",
+      "config": {
+        "listen": "0.0.0.0:7777",
+        "remote": "10.10.10.3:22",
+        "network": {
+          "use_udp": false,
+          "accept_proxy_timeout": null
+        }
+      },
+      "status": "Running",
+      "auto_start": true,
+      "created_at": "2025-12-26T01:58:03.260018798+00:00",
+      "updated_at": "2025-12-26T02:18:17.911225040+00:00"
+    }
+  ]
+}

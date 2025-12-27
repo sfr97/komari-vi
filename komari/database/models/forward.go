@@ -12,7 +12,6 @@ type ForwardRule struct {
 	Type             string    `json:"type" gorm:"type:varchar(32);index"`                     // direct / relay_group / chain
 	Status           string    `json:"status" gorm:"type:varchar(32);index;default:'stopped'"` // stopped / running / error
 	ConfigJSON       string    `json:"config_json" gorm:"type:longtext"`                       // 结构化配置（JSON）
-	RealmConfig      string    `json:"realm_config" gorm:"type:longtext"`                      // 最新下发的入口 Realm 配置（TOML）
 	TotalConnections int64     `json:"total_connections" gorm:"type:bigint;default:0"`
 	TotalTrafficIn   int64     `json:"total_traffic_in" gorm:"type:bigint;default:0"`
 	TotalTrafficOut  int64     `json:"total_traffic_out" gorm:"type:bigint;default:0"`
@@ -103,12 +102,4 @@ type ForwardSystemSettings struct {
 	ProcessStopTimeout     int       `json:"process_stop_timeout" gorm:"default:5"` // 秒
 	UpdatedAt              LocalTime `json:"updated_at"`
 	CreatedAt              LocalTime `json:"created_at"`
-}
-
-// RealmConfigTemplate Realm 默认配置模板（单行表，id=1）
-type RealmConfigTemplate struct {
-	ID           uint      `json:"id" gorm:"primaryKey;autoIncrement"`
-	TemplateToml string    `json:"template_toml" gorm:"type:longtext"`
-	UpdatedAt    LocalTime `json:"updated_at"`
-	CreatedAt    LocalTime `json:"created_at"`
 }

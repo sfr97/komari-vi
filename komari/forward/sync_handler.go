@@ -10,7 +10,7 @@ import (
 )
 
 // ApplyConfigSync 更新规则配置并广播给前端
-func ApplyConfigSync(ruleID uint, nodeID string, realmConfig string, updates map[string]interface{}, reason string) error {
+func ApplyConfigSync(ruleID uint, nodeID string, updates map[string]interface{}, reason string) error {
 	rule, err := dbforward.GetForwardRule(ruleID)
 	if err != nil {
 		return err
@@ -27,14 +27,10 @@ func ApplyConfigSync(ruleID uint, nodeID string, realmConfig string, updates map
 			}
 		}
 	}
-	if realmConfig != "" {
-		rule.RealmConfig = realmConfig
-	}
 	rule.UpdatedAt = models.FromTime(time.Now())
 
 	if err := dbforward.UpdateForwardRule(ruleID, map[string]interface{}{
 		"config_json":  rule.ConfigJSON,
-		"realm_config": rule.RealmConfig,
 		"updated_at":   rule.UpdatedAt,
 	}); err != nil {
 		return err

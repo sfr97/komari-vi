@@ -40,6 +40,13 @@ func GetForwardStats(ruleID uint) ([]models.ForwardStat, error) {
 	return stats, nil
 }
 
+func DeleteForwardStatsByRule(ruleID uint) error {
+	if ruleID == 0 {
+		return nil
+	}
+	return dbcore.GetDBInstance().Where("rule_id = ?", ruleID).Delete(&models.ForwardStat{}).Error
+}
+
 func UpdateForwardStatStatus(ruleID uint, nodeID string, status string) error {
 	if ruleID == 0 || nodeID == "" || status == "" {
 		return nil

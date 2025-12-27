@@ -5,14 +5,12 @@ import { Button, Card, Flex, Select, Tabs, Text, TextField } from '@radix-ui/the
 import { ChevronDownIcon, PlusIcon, ReloadIcon } from '@radix-ui/react-icons'
 import { useNavigate } from 'react-router-dom'
 
-import RuleTable from './parts/RuleTable'
-import RuleFormDrawer, { type RuleFormState } from './parts/RuleFormDrawer'
-import RuleDetailDrawer from './parts/RuleDetailDrawer'
-import SettingsAndTemplate from './parts/SettingsAndTemplate'
-import TestConnectivityDialog from './parts/TestConnectivityDialog'
-import RuleLogsDialog from './parts/RuleLogsDialog'
-import Loading from '@/components/loading'
-import { NodeDetailsProvider } from '@/contexts/NodeDetailsContext'
+	import RuleTable from './parts/RuleTable'
+	import RuleFormDrawer, { type RuleFormState } from './parts/RuleFormDrawer'
+	import RuleDetailDrawer from './parts/RuleDetailDrawer'
+	import TestConnectivityDialog from './parts/TestConnectivityDialog'
+	import Loading from '@/components/loading'
+	import { NodeDetailsProvider } from '@/contexts/NodeDetailsContext'
 
 export type ForwardRule = {
 	id: number
@@ -25,7 +23,6 @@ export type ForwardRule = {
 	type: string
 	status: string
 	config_json: string
-	realm_config?: string
 	total_connections?: number
 	total_traffic_in?: number
 	total_traffic_out?: number
@@ -72,7 +69,6 @@ const ForwardPage = () => {
 	const [editing, setEditing] = useState<RuleFormState | null>(null)
 	const [detail, setDetail] = useState<ForwardRule | null>(null)
 	const [testRule, setTestRule] = useState<ForwardRule | null>(null)
-	const [logRule, setLogRule] = useState<ForwardRule | null>(null)
 	const [search, setSearch] = useState('')
 	const [statusFilter, setStatusFilter] = useState('all')
 	const [typeFilter, setTypeFilter] = useState('all')
@@ -301,15 +297,13 @@ const ForwardPage = () => {
 					</Text>
 				</Flex>
 
-								<Tabs.Root defaultValue="list">
+									<Tabs.Root defaultValue="list">
 
-									<Tabs.List>
+										<Tabs.List>
 
-										<Tabs.Trigger value="list">{t('forward.tabList')}</Tabs.Trigger>
+											<Tabs.Trigger value="list">{t('forward.tabList')}</Tabs.Trigger>
 
-										<Tabs.Trigger value="settings">{t('forward.tabSystemConfig', { defaultValue: '系统配置' })}</Tabs.Trigger>
-
-									</Tabs.List>
+										</Tabs.List>
 
 									<Tabs.Content value="list" className="pt-3">
 
@@ -553,9 +547,7 @@ const ForwardPage = () => {
 
 																	onTest={rule => setTestRule(rule)}
 
-																	onLogs={rule => setLogRule(rule)}
-
-																	onDelete={handleDelete}
+																		onDelete={handleDelete}
 
 																	onExport={handleExport}
 
@@ -585,13 +577,7 @@ const ForwardPage = () => {
 
 									</Tabs.Content>
 
-									<Tabs.Content value="settings" className="pt-3">
-
-										<SettingsAndTemplate />
-
-									</Tabs.Content>
-
-								</Tabs.Root>
+									</Tabs.Root>
 
 				<RuleFormDrawer
 					open={formOpen}
@@ -603,12 +589,11 @@ const ForwardPage = () => {
 					onSubmit={handleSave}
 				/>
 
-				<RuleDetailDrawer rule={detail} onClose={() => setDetail(null)} />
-				<TestConnectivityDialog open={!!testRule} ruleId={testRule?.id} onClose={() => setTestRule(null)} />
-				<RuleLogsDialog open={!!logRule} ruleId={logRule?.id} onClose={() => setLogRule(null)} />
-			</Flex>
-		</NodeDetailsProvider>
-	)
-}
+					<RuleDetailDrawer rule={detail} onClose={() => setDetail(null)} />
+					<TestConnectivityDialog open={!!testRule} ruleId={testRule?.id} onClose={() => setTestRule(null)} />
+				</Flex>
+			</NodeDetailsProvider>
+		)
+	}
 
 export default ForwardPage
